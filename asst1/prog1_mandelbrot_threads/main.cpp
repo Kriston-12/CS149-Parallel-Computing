@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     // end parsing of commandline options
 
 
-    int* output_serial = new int[width*height];
+    int* output_serial = new int[width*height]; //开辟内存空间给serial和thread两个版本的image，然后用内从控件中存储的值来draw image
     int* output_thread = new int[width*height];
     
     //
@@ -134,6 +134,8 @@ int main(int argc, char** argv) {
     //
 
     double minSerial = 1e30;
+    // I was confused by the given i < 5, below at first glance. 
+    // The loop is for measuring performance, multiple calling is for reducing noise.
     for (int i = 0; i < 5; ++i) {
        memset(output_serial, 0, width * height * sizeof(int));
         double startTime = CycleTimer::currentSeconds();

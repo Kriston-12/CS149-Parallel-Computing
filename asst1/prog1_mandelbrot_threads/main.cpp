@@ -56,11 +56,6 @@ bool verifyResult (int *gold, int *result, int width, int height) {
 
     for (i = 0; i < height; i++) {
         for (j = 0; j < width; j++) {
-            // if (std::abs(gold[i * width + j] - result[i * width + j]) > 1e-6) {
-            //     printf("Mismatch at [%d, %d]: Expected %d, Got %d\n",
-            //         i, j, gold[i * width + j], result[i * width + j]);
-            //     return false;
-            // }
             if (gold[i * width + j] != result[i * width + j]) {
                 printf ("Mismatch : [%d][%d], Expected : %d, Actual : %d\n",
                             i, j, gold[i * width + j], result[i * width + j]);
@@ -77,7 +72,7 @@ int main(int argc, char** argv) {
     const unsigned int width = 1600;
     const unsigned int height = 1200;
     const int maxIterations = 256;
-    int numThreads = 2;
+    int numThreads = 8;
 
     float x0 = -2;
     float x1 = 1;

@@ -122,10 +122,17 @@ void mandelbrotThread(
     // are created and the main application thread is used as a worker
     // as well.
     for (int i=1; i<numThreads; i++) {
+        double startTime = CycleTimer::currentSeconds();
         workers[i] = std::thread(workerThreadStart, &args[i]);
+        double endTime = CycleTimer::currentSeconds();
+        printf("Thread %d takes\t\t[%.3f] ms\n", args[i].threadId, (startTime - endTime) * 1000);
     }
-    
+
+    double startTime = CycleTimer::currentSeconds();
     workerThreadStart(&args[0]);
+    double endTime = CycleTimer::currentSeconds();
+
+    printf("Thread 0 takes\t\t[%.3f] ms\n", startTime - endTime);
 
     // join worker threads
     for (int i=1; i<numThreads; i++) {

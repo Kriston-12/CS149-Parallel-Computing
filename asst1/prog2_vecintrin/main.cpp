@@ -186,6 +186,13 @@ void absVector(float* values, float* output, int N) {
 //  Note: Take a careful look at this loop indexing.  This example
 //  code is not guaranteed to work when (N % VECTOR_WIDTH) != 0.
 //  Why is that the case?
+//  Bc you will have extra/remainder that has not been vectorized
+
+// Overall flow, load values to temporary var X,
+// use mask to determine if the value is negative, 
+// use the mask to perform abs if x is neg then 0 - x is stored in result,
+// else store x - 0 into the result
+// lastlat write result into the output
   for (int i=0; i<N; i+=VECTOR_WIDTH) {
 
     // All ones
@@ -197,7 +204,7 @@ void absVector(float* values, float* output, int N) {
     // Load vector of values from contiguous memory addresses
     _cs149_vload_float(x, values+i, maskAll);               // x = values[i];
 
-    // Set mask according to predicate
+    // Set mask according to predicate, the result is in maskIsNegative
     _cs149_vlt_float(maskIsNegative, x, zero, maskAll);     // if (x < 0) {
 
     // Execute instruction using mask ("if" clause)

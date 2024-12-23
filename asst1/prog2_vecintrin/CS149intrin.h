@@ -33,6 +33,7 @@ struct __cs149_mask : __cs149_vec<bool> {};
 //***********************
 
 // Return a mask initialized to 1 in the first N lanes and 0 in the others
+// VECTOR_WIDTH默认是4，the parameter controls the bumber of bits initialized to 1
 __cs149_mask _cs149_init_ones(int first = VECTOR_WIDTH);
 
 // Return the inverse of maska
@@ -44,11 +45,11 @@ __cs149_mask _cs149_mask_or(__cs149_mask &maska, __cs149_mask &maskb);
 // Return (maska & maskb)
 __cs149_mask _cs149_mask_and(__cs149_mask &maska, __cs149_mask &maskb);
 
-// Count the number of 1s in maska
+// Count the number of 1s in maska, 参数中bits为1的个数
 int _cs149_cntbits(__cs149_mask &maska);
 
 // Set register to value if vector lane is active
-//  otherwise keep the old value
+//  otherwise keep the old value, mask is used to show if they ar eactive
 void _cs149_vset_float(__cs149_vec_float &vecResult, float value, __cs149_mask &mask);
 void _cs149_vset_int(__cs149_vec_int &vecResult, int value, __cs149_mask &mask);
 // For user's convenience, returns a vector register with all lanes initialized to value

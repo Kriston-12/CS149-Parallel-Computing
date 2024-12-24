@@ -248,14 +248,55 @@ void clampedExpSerial(float* values, int* exponents, float* output, int N) {
 }
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
-
-  //
-  // CS149 STUDENTS TODO: Implement your vectorized version of
+ // CS149 STUDENTS TODO: Implement your vectorized version of
   // clampedExpSerial() here.
   //
   // Your solution should work for any value of
   // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
-  //
+  __cs149_vec_float x;
+  __cs149_vec_int y;
+  // __cs149_vec_int count;
+  __cs149_vec_float result;
+  __cs149_vec_float limit = _cs149_vset_float(9.999999f);
+  __cs149_vec_int zero = _cs149_vset_int(0);
+  __cs149_vec_int one = _cs149_vset_int(1);
+  __cs149_mask maskAll, maskIsGreaterThanClamp, maskIsYZero, maskNotZero, maskCntGt0;
+  
+  // int remainder = N % VECTOR_WIDTH;
+  // int cap = N - remainder;
+  for (int i = 0; i < N; i += VECTOR_WIDTH) {
+		  maskAll = _cs149_init_ones(N - i); // ensure we handle the reminder case when N % width != 0
+		  _cs149_vload_float(x, values+i, maskAll); // x = value[i]
+		  _cs149_vload_int(y, exponents+i, maskAll); // y = exponents[i]
+		  // see if y is zero, using
+		  // _cs149_veq_int(__cs149_mask &vecResult, __cs149_vec_int &veca, __cs149_vec_int &vecb, __cs149_mask &mask);
+		  _cs149_veq_int(maskIsYZero, y, zero, maskAll); // if y == 0
+		  _cs149_vset_float(result, 1.f, maskIsYZero); // then y = 1.f
+		  
+		  
+		  // else
+		  // set result to x
+		  maskNotZero = _cs149_mask_not(maskIsYZero);
+		  _cs149_vmove_float(result, x, maskNotZero); //float result = x;
+		  
+		  //_cs149_vsub_int(__cs149_vec_int &vecResult, __cs149_vec_int &veca, __cs149_vec_int &vecb, __cs149_mask &mask);
+		  _cs149_vsub_int(y, y, one, maskNotZero); // since we do not need to use y anymore after the loop, we could simply do y = y - 1
+
+		  // check count > 0 using
+		  //_cs149_vgt_int(__cs149_mask &vecResult, __cs149_vec_int &veca, __cs149_vec_int &vecb, __cs149_mask &mask);
+		  // only cntbits returns things that could be a condition
+		  while (_cs149_vgt_int(maskCntGt0, y, zero, maskNotZero), _cs149_cntbits(maskCntGt0) ){
+			  _cs149_vmult_float(result, result, x, maskCntGt0);   // result = result * x
+			  _cs149_vsub_int(y, y, one, maskCntGt0);  // y = y - 1
+		  }
+		  
+		  _cs149_vgt_float(maskIsGreaterThanClamp, result, limit, maskAll); 
+		  _cs149_vmove_float(result, limit, maskIsGreaterThanClamp);
+		  _cs149_vstore_float(output + i, result, maskAll);
+	  
+  }
+  
+
   
 }
 

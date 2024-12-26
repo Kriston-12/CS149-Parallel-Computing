@@ -9,6 +9,7 @@
 using namespace ispc;
 
 extern void sqrtSerial(int N, float startGuess, float* values, float* output);
+extern void sqrtAVX2(int N, float startGuess, float* values, float* output);
 
 static void verifyResult(int N, float* result, float* gold) {
     for (int i=0; i<N; i++) {
@@ -34,14 +35,14 @@ int main() {
         // to you generate best and worse-case speedups
         
         // starter code populates array with random input values
-        // below achieves the max speedup, even though I do not know why
+        // below achieves the max speedup, even though I do not know why. Might have to do with the optimization strategy of ISPC
         // values[i] = N % 2 ? 1.f : 2.99f;
 
         // this also gives a pretty decent speedup from ISPC
-        // values[i] = 2.99f;
+        values[i] = 2.99f;
 
-        // try lowest, makes one super fast and the rest super laggy
-        values[i] = (i & 7) ? 1.0f : 2.999f;
+        // try lowest, makes one super fast and the rest super laggy. To achieve min, we want serial time short but ISPC time long
+        // values[i] = (i & 7) ? 1.f : 2.999f;
     }
 
     // generate a gold version to check results
@@ -80,6 +81,18 @@ int main() {
 
     verifyResult(N, output, gold);
 
+    
+    double minAVX2 = 1e30;
+    for (int i = 0; i < 3; ++i) {
+        double startTime = CycleTimer::currentSeconds();
+        sqrtAVX2(N, initialGuess, values, output);
+        double endTime = CycleTimer::currentSeconds();
+        minAVX2 = std::min(minAVX2, endTime - startTime);
+    }
+    printf("[sqrt task AVX2]:\t[%.3f] ms\n", minAVX2 * 1000);
+
+    verifyResult(N, output, gold);
+
     // Clear out the buffer
     for (unsigned int i = 0; i < N; ++i)
         output[i] = 0;
@@ -100,6 +113,7 @@ int main() {
     verifyResult(N, output, gold);
 
     printf("\t\t\t\t(%.2fx speedup from ISPC)\n", minSerial/minISPC);
+    printf("\t\t\t\t(%.2fx speedup from AVX2)\n", minSerial/minAVX2);
     printf("\t\t\t\t(%.2fx speedup from task ISPC)\n", minSerial/minTaskISPC);
 
     delete [] values;

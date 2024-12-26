@@ -34,7 +34,14 @@ int main() {
         // to you generate best and worse-case speedups
         
         // starter code populates array with random input values
-        values[i] = 2.6f;
+        // below achieves the max speedup, even though I do not know why
+        // values[i] = N % 2 ? 1.f : 2.99f;
+
+        // this also gives a pretty decent speedup from ISPC
+        // values[i] = 2.99f;
+
+        // try lowest, makes one super fast and the rest super laggy
+        values[i] = (i & 7) ? 1.0f : 2.999f;
     }
 
     // generate a gold version to check results

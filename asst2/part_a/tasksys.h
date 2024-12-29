@@ -27,7 +27,7 @@ class TaskSystemSerial: public ITaskSystem {
  */
 class TaskSystemParallelSpawn: public ITaskSystem {
     int numThreads;
-    std::thread *threads;
+    std::unique_ptr<std::vector<std::thread>> threadPool; // same as std::thread* threads
     public:
         TaskSystemParallelSpawn(int num_threads);
         ~TaskSystemParallelSpawn();

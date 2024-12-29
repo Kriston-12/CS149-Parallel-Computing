@@ -1,5 +1,5 @@
 #include "tasksys.h"
-
+#include <atomic>
 
 IRunnable::~IRunnable() {}
 
@@ -48,32 +48,55 @@ const char* TaskSystemParallelSpawn::name() {
     return "Parallel + Always Spawn";
 }
 
-TaskSystemParallelSpawn::TaskSystemParallelSpawn(int num_threads): ITaskSystem(num_threads), numThreads(num_threads), threads(new std::thread[num_threads]) {
+TaskSystemParallelSpawn::TaskSystemParallelSpawn(int num_threads): 
+    ITaskSystem(num_threads), 
+    numThreads(num_threads), 
+    /*threadPool(std::make_unique<std::vector<std::thread>>())--c++11 does not have make_unique, only c++14 later has*/
+    threadPool(new std::vector<std::thread>)  {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
-
+    // for smart pointer, using ->
+    threadPool->reserve(num_threads);
 
 }
 
 TaskSystemParallelSpawn::~TaskSystemParallelSpawn() {}
 
 void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
-
-
-    //
     // TODO: CS149 students will modify the implementation of this
     // method in Part A.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
-    //
+    // for (int i = 0; i < num_total_tasks; i++) {
+    //     runnable->runTask(i, num_total_tasks);
+    // }
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    std::atomic<int> taskIndex(0); // atomic variable shared by all threads, 
+                                   // if it reaches num_total_tasks, then all assigned tasks are distributed and done by assigned threads
+
+    // runnable represents the test class, runTask is a function of this class
+    auto threadTask = [&]() {
+        while (true) {
+            int i = taskIndex.fetch_add(1);
+            if (i >= num_total_tasks) break;
+            runnable->runTask(i, num_total_tasks);
+        }
+    };
+
+    for (int i = 0; i < numThreads; ++i) {
+        threadPool->emplace_back(threadTask);
     }
     
+    for (auto& thread : *threadPool) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+
+    threadPool->clear();
 }
 
 TaskID TaskSystemParallelSpawn::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

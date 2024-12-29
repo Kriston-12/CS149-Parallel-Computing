@@ -2,6 +2,7 @@
 #define _ITASKSYS_H
 #include <vector>
 #include <thread>
+#include <memory>
 
 typedef int TaskID;
 

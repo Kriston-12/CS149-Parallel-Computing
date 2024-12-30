@@ -120,13 +120,21 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): 
+        ITaskSystem(num_threads), 
+        numThreads(numThreads),
+        threadPool(new std::vector<std::thread>){
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    threadPool->reserve(numThreads);
+    for (int i = 0; i < numThreads; ++i) {
+        threadPool->emplace_back(new std::thread);
+    }
+    // Do not know the task (runnable->runTask) yet, so use async or other stuff to defer the threads
 }
 
 TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}

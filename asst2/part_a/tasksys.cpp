@@ -1,5 +1,6 @@
 #include "tasksys.h"
-#include <atomic>
+
+
 
 IRunnable::~IRunnable() {}
 
@@ -120,38 +121,96 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
+// Function that lets each threads wait until tasks come in to notify them
+void TaskSystemParallelThreadPoolSpinning::workerThreadLoop() {
+    while (true) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(taskMutex); // lock the mutex for conditional variable usage
+
+            // if the current task is done or the tasks queue is empty, assign task then, otherwise wait
+            taskCondition.wait(lock, [this]() {return done || !tasks.empty();}); 
+
+            if (done && tasks.empty()) {
+                break;
+            }
+            
+            // assign first task 
+            task = std::move(tasks.front()); 
+            tasks.pop();
+            ++activeTasks;
+        }
+
+        // let the thread execute this task if it is available
+        task(); 
+
+        { // if thread reaches here, meaning it completed the assigned task 
+            std::unique_lock<std::mutex> lock(taskMutex);
+            --activeTasks;
+            if (tasks.empty() && activeTasks == 0) {
+                taskCompleteCondition.notify_all();
+            }
+        }
+    }
+}
+
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): 
         ITaskSystem(num_threads), 
-        numThreads(numThreads),
-        threadPool(new std::vector<std::thread>){
+        numThreads(num_threads),
+        done(false) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
-    threadPool->reserve(numThreads);
+    threadPool.reserve(numThreads);
     for (int i = 0; i < numThreads; ++i) {
-        threadPool->emplace_back(new std::thread);
+        threadPool.emplace_back(&TaskSystemParallelThreadPoolSpinning::workerThreadLoop, this);
     }
-    // Do not know the task (runnable->runTask) yet, so use async or other stuff to defer the threads
+    
 }
 
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+    {
+        std::unique_lock<std::mutex> lock(taskMutex);
+        done = true; // let all other threads run their tasks cuz the thread is about to exit
+        taskCondition.notify_all();
+    }
+
+    for (std::thread& t: threadPool) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+}
 
 void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_total_tasks) {
-
-
     //
     // TODO: CS149 students will modify the implementation of this
     // method in Part A.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
-    //
+    // for (int i = 0; i < num_total_tasks; i++) {
+    //     runnable->runTask(i, num_total_tasks);
+    // }
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    {
+        std::unique_lock<std::mutex> lock(taskMutex); // this lock is to ensure 
+        for (int i = 0; i < num_total_tasks; ++i) {
+            // enqueue functions to be run in the tasks queue
+            tasks.emplace([=] () {
+                runnable->runTask(i, num_total_tasks);
+            });
+        }
     }
+
+    // after assigning, notifying all threads
+    taskCondition.notify_all();
+
+    std::unique_lock<std::mutex> lock(taskMutex);
+    taskCompleteCondition.wait(lock, [this]() {return tasks.empty() && activeTasks == 0;});
 }
+
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                                               const std::vector<TaskID>& deps) {

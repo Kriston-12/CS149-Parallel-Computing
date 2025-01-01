@@ -1,5 +1,5 @@
 #include "tasksys.h"
-
+// #include <iostream>
 
 
 IRunnable::~IRunnable() {}
@@ -122,32 +122,33 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
 }
 
 // Function that lets each threads wait until tasks come in to notify them
-void TaskSystemParallelThreadPoolSpinning::workerThreadLoop() {
+void TaskSystemParallelThreadPoolSpinning::workerThreadLoop(int threadId) {
     while (true) {
         std::function<void()> task;
-        {
-            std::unique_lock<std::mutex> lock(taskMutex); // lock the mutex for conditional variable usage
-
-            // if the current task is done or the tasks queue is empty, assign task then, otherwise wait
-            taskCondition.wait(lock, [this]() {return done || !tasks.empty();}); 
-
-            if (done && tasks.empty()) {
-                break;
+        {   
+            if (!threadQueues[threadId].empty()) {
+                task = std::move(threadQueues[threadId].front());
+                threadQueues[threadId].pop();
+            } 
+            else {
+                std::unique_lock<std::mutex> lock(taskMutex);
+                if (done) {
+                    break;
+                }
+                taskCondition.wait(lock, [this, threadId]() {
+                    return done || !threadQueues[threadId].empty();
+                });
             }
-            
-            // assign first task 
-            task = std::move(tasks.front()); 
-            tasks.pop();
-            ++activeTasks;
         }
 
         // let the thread execute this task if it is available
-        task(); 
-
-        { // if thread reaches here, meaning it completed the assigned task 
+        if (task)
+        {   
+            
+            task();
             std::unique_lock<std::mutex> lock(taskMutex);
             --activeTasks;
-            if (tasks.empty() && activeTasks == 0) {
+            if (activeTasks == 0) {
                 taskCompleteCondition.notify_all();
             }
         }
@@ -157,7 +158,9 @@ void TaskSystemParallelThreadPoolSpinning::workerThreadLoop() {
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): 
         ITaskSystem(num_threads), 
         numThreads(num_threads),
-        done(false) {
+        threadQueues(num_threads),
+        activeTasks(0),
+        done(false){
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -165,8 +168,9 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
     // (requiring changes to tasksys.h).
     //
     threadPool.reserve(numThreads);
+    // std::cout << "Enter run function" << std::endl; no io output since python script does not output it
     for (int i = 0; i < numThreads; ++i) {
-        threadPool.emplace_back(&TaskSystemParallelThreadPoolSpinning::workerThreadLoop, this);
+        threadPool.emplace_back(&TaskSystemParallelThreadPoolSpinning::workerThreadLoop, this, i);
     }
     
 }
@@ -193,22 +197,25 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // for (int i = 0; i < num_total_tasks; i++) {
     //     runnable->runTask(i, num_total_tasks);
     // }
+    // int tasksPerThread = (num_total_tasks + threadPool.size() - 1) / threadPool.size();
 
     {
-        std::unique_lock<std::mutex> lock(taskMutex); // this lock is to ensure 
         for (int i = 0; i < num_total_tasks; ++i) {
+            int threadId = i % threadPool.size();
             // enqueue functions to be run in the tasks queue
-            tasks.emplace([=] () {
+            threadQueues[threadId].emplace([=] () {
                 runnable->runTask(i, num_total_tasks);
             });
         }
+        std::unique_lock<std::mutex> lock(taskMutex);
+        activeTasks = num_total_tasks;
     }
 
     // after assigning, notifying all threads
     taskCondition.notify_all();
 
     std::unique_lock<std::mutex> lock(taskMutex);
-    taskCompleteCondition.wait(lock, [this]() {return tasks.empty() && activeTasks == 0;});
+    taskCompleteCondition.wait(lock, [this]() {return activeTasks == 0;});
 }
 
 

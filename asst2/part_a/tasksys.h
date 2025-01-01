@@ -54,18 +54,19 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
     std::vector<std::thread> threadPool; 
     // std::unique_ptr<std::vector<std::thread>> threadPool report error, 
     // might be that when the thread finish one task, then it is destroyed
-    std::queue<std::function<void()>> tasks;
+    // std::queue<std::function<void()>> tasks;
+    std::vector<std::queue<std::function<void()>>> threadQueues; // each thread has one queue
     std::mutex taskMutex;
     std::condition_variable taskCondition;
     std::condition_variable taskCompleteCondition;
     std::atomic<int> activeTasks{0};
-    bool done;
+    std::atomic<bool> done;
     public:
         TaskSystemParallelThreadPoolSpinning(int num_threads);
         ~TaskSystemParallelThreadPoolSpinning();
         const char* name();
         void run(IRunnable* runnable, int num_total_tasks);
-        void workerThreadLoop();
+        void workerThreadLoop(int threadId);
         TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                 const std::vector<TaskID>& deps);
         void sync();

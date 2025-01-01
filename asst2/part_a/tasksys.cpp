@@ -122,45 +122,47 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
 }
 
 // Function that lets each threads wait until tasks come in to notify them
-void TaskSystemParallelThreadPoolSpinning::workerThreadLoop(int threadId) {
-    while (true) {
-        std::function<void()> task;
-        {   
-            if (!threadQueues[threadId].empty()) {
-                task = std::move(threadQueues[threadId].front());
-                threadQueues[threadId].pop();
-            } 
-            else {
-                std::unique_lock<std::mutex> lock(taskMutex);
-                if (done) {
-                    break;
-                }
-                taskCondition.wait(lock, [this, threadId]() {
-                    return done || !threadQueues[threadId].empty();
-                });
-            }
-        }
+// void TaskSystemParallelThreadPoolSpinning::workerThreadLoop(int threadId) {
+//     while (true) {
+//         std::function<void()> task;
+//         {   
+//             if (!threadQueues[threadId].empty()) {
+//                 task = std::move(threadQueues[threadId].front());
+//                 threadQueues[threadId].pop();
+//             } 
+//             else {
+//                 std::unique_lock<std::mutex> lock(taskMutex);
+//                 if (done) {
+//                     break;
+//                 }
+//                 taskCondition.wait(lock, [this, threadId]() {
+//                     return done || !threadQueues[threadId].empty();
+//                 });
+//             }
+//         }
 
-        // let the thread execute this task if it is available
-        if (task)
-        {   
+//         // let the thread execute this task if it is available
+//         if (task)
+//         {   
             
-            task();
-            std::unique_lock<std::mutex> lock(taskMutex);
-            --activeTasks;
-            if (activeTasks == 0) {
-                taskCompleteCondition.notify_all();
-            }
-        }
-    }
-}
+//             task();
+//             std::unique_lock<std::mutex> lock(taskMutex);
+//             --activeTasks;
+//             if (activeTasks == 0) {
+//                 taskCompleteCondition.notify_all();
+//             }
+//         }
+//     }
+// }
 
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): 
         ITaskSystem(num_threads), 
         numThreads(num_threads),
-        threadQueues(num_threads),
-        activeTasks(0),
-        done(false){
+        stopFlag(false),
+        currentTaskId(0),
+        completedTasks(0),
+        runnable(nullptr),
+        totalTasks(0){
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -170,21 +172,42 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
     threadPool.reserve(numThreads);
     // std::cout << "Enter run function" << std::endl; no io output since python script does not output it
     for (int i = 0; i < numThreads; ++i) {
-        threadPool.emplace_back(&TaskSystemParallelThreadPoolSpinning::workerThreadLoop, this, i);
+        threadPool.emplace_back([this] {
+            while (true) { // Calling constructor would let the thread all run while (true) but does not execute the code below 
+                            // until the run function is called, which assigns runnable and taskId
+                IRunnable* currentRunnable = nullptr;
+                int taskId = -1;
+                {
+                    std::lock_guard<std::mutex> lock(taskMutex);
+                    if (runnable && currentTaskId < totalTasks) {
+                        taskId = currentTaskId++;
+                        currentRunnable = runnable;
+                        if (currentTaskId >= totalTasks) {
+                            runnable = nullptr;
+                        }
+                    }
+                }
+
+                if (currentRunnable) { // if there is assigned task, then run them, and increase completedTasks
+                    currentRunnable->runTask(taskId, totalTasks);
+                    completedTasks.fetch_add(1);
+                }
+                else if (stopFlag) {
+                    break;
+                }
+                
+            }
+        });
     }
     
 }
 
 TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
-    {
-        std::unique_lock<std::mutex> lock(taskMutex);
-        done = true; // let all other threads run their tasks cuz the thread is about to exit
-        taskCondition.notify_all();
-    }
-
-    for (std::thread& t: threadPool) {
-        if (t.joinable()) {
-            t.join();
+    // if destructor is called, stop running and assining, end the loop
+    stopFlag.store(true);
+    for (auto& thread : threadPool) {
+        if (thread.joinable()) {
+            thread.join();
         }
     }
 }
@@ -199,23 +222,18 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // }
     // int tasksPerThread = (num_total_tasks + threadPool.size() - 1) / threadPool.size();
 
-    {
-        for (int i = 0; i < num_total_tasks; ++i) {
-            int threadId = i % threadPool.size();
-            // enqueue functions to be run in the tasks queue
-            threadQueues[threadId].emplace([=] () {
-                runnable->runTask(i, num_total_tasks);
-            });
-        }
-        std::unique_lock<std::mutex> lock(taskMutex);
-        activeTasks = num_total_tasks;
+    {   // assign tasks to threads
+        std::lock_guard<std::mutex> lock(taskMutex);
+        this->runnable = runnable;
+        this->totalTasks = num_total_tasks;
+        this->currentTaskId = 0;
+        this->completedTasks = 0;
     }
 
     // after assigning, notifying all threads
-    taskCondition.notify_all();
-
-    std::unique_lock<std::mutex> lock(taskMutex);
-    taskCompleteCondition.wait(lock, [this]() {return activeTasks == 0;});
+    while (completedTasks.load() < num_total_tasks) {
+        
+    }
 }
 
 

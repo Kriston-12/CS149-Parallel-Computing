@@ -79,6 +79,15 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * itasksys.h for documentation of the ITaskSystem interface.
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
+    int numThreads;
+    std::vector<std::thread> threadPool; 
+    std::mutex taskMutex;
+    std::condition_variable taskAvailable;
+    IRunnable* currentRunnable;
+    int currentTaskId;
+    int totalTasks;
+    std::condition_variable completeAll;
+
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();

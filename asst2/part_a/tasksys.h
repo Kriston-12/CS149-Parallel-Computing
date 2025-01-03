@@ -83,11 +83,12 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     std::vector<std::thread> threadPool; 
     std::mutex taskMutex;
     std::condition_variable taskAvailable;
-    IRunnable* currentRunnable;
+    IRunnable* runnable;
     // std::atomic<int> currentTaskId{0}; // doesn't matter if it is atomic or not
-    int currentTaskId{0};
-    int totalTasks{0};
+    std::atomic<int> currentTaskId{0};
+    std::atomic<int> totalTasks{0};
     std::atomic<int> stopFlag;
+    std::atomic<int> completedTasks;
     std::condition_variable completeAll;
 
     public:

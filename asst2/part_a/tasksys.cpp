@@ -261,7 +261,7 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): 
         ITaskSystem(num_threads),
         numThreads(num_threads),
-        currentRunnable(nullptr),
+        runnable(nullptr),
         stopFlag(false)
 {
     //
@@ -274,37 +274,44 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     for (int i = 0; i < num_threads; ++i) {
         threadPool.emplace_back([this] () {
             while (true) {
-                IRunnable *runnable = nullptr;
-                int taskId;
-                // while (currentTaskId && currentTaskId >= totalTasks) { // it does reach here, which means there is a point that currentTaskId >= totalTasks
-                //     std::cout << "it reaches here" << std::endl;
-                // }
-                if (totalTasks != 0 && currentTaskId != 0 && currentTaskId >= totalTasks ) { //这个判断条件应该错了
+                IRunnable *currentRunnable = nullptr;
+                int taskId = -1;
+
+                if (completedTasks >= totalTasks) { //之前没有这个if好像会有 mainthread丢失notify信号的情况导致infinite while loop
                     completeAll.notify_one();
+                }
+
+                {
+                    std::unique_lock<std::mutex> grd(taskMutex);
+                    // 这里实测 return runnable != nullptr会导致线程执行完毕之后还在这里等待
+                    // 这是因为当destructor被call之后，由于我们下面的所有任务已被分配的if statement导致了runnable已经等于nullptr了
+                    // 
+                    taskAvailable.wait(grd, [this](){return runnable != nullptr || stopFlag.load();}); 
+                    if (currentTaskId < totalTasks) {
+                        currentRunnable = runnable;
+                        taskId = currentTaskId++;
+                    }
+                }
+
+                // if (currentTaskId >= totalTasks) { //这里大错特错了，由于this->runnable = nullptr，所以上面taskAvailable.wait
+                //                         //中 return runnable != nullptr永远是False, 把这个注释了之后 math_operations_in_tight_for_loop_fan_in也过了
+                //                         // 但是好像过不了math_operations_in_tight_for_loop_fewer_tasks
+                //     runnable = nullptr; // 所有任务已分配,
+                // }
+                
+     
+                if (taskId != -1) {
+                    // 执行任务
+                    currentRunnable->runTask(taskId, totalTasks);
+                    completedTasks.fetch_add(1);
+                    if (completedTasks >= totalTasks) { //如果在这里
+                        completeAll.notify_one();
+                    }
+                } else if (stopFlag) {
                     break;
                 }
-                // while (currentTaskId && currentTaskId >= totalTasks) { // it does not reach here
-                //     std::cout << "it reaches here" << std::endl;
-                // }
-                // while (currentTaskId > 0) { // reaches here 说明分配发生了
-                //     std::cout << "it reaches here" << std::endl;
-                // }
-
-                std::unique_lock<std::mutex> grd(taskMutex);
-                taskAvailable.wait(grd, [this](){
-                    // while (true) { //it does reach here, 说明notifyall()是成功的，但是只有部分成功了，有几个threadusage非常低，说明有threads没有接收到信息
-                    //     std::cout << "aaaaaa";
-                    // }
-                    return currentRunnable != nullptr;});
-                
-                currentRunnable->runTask(currentTaskId, totalTasks);
-                ++currentTaskId;
 
             }
-
-            // while (true) { looks like the threads immediately reach here without running tasks
-            //     std::cout << "aaaaaaaaaa";
-            // }
         });
     }
 }
@@ -315,23 +322,15 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // operations (such as thread pool shutdown construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
-    //
-    // while (true) it does not reach here, so there are tasks running in other threads, but the threads are instead sleeping
-    // {   
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches"; std::cout << "It reaches";
-    //     std::cout << "It reaches"; std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches";
-    //     std::cout << "It reaches"; std::cout << "It reaches";
-    // }
-    
+    stopFlag.store(true);
+    {
+        std::lock_guard<std::mutex> lock(taskMutex);
+        taskAvailable.notify_all(); // 唤醒所有线程
+    }
     for (auto& thread : threadPool) {
-        thread.join();
+        if (thread.joinable()) {
+            thread.join();
+        }
     }
 }
 
@@ -345,19 +344,21 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     //    for (int i = 0; i < num_total_tasks; i++) {
     //     runnable->runTask(i, num_total_tasks);
     // }
-    {
-        std::unique_lock<std::mutex> lock(taskMutex);
-        currentRunnable = runnable; 
-        totalTasks = num_total_tasks;
-        currentTaskId = 0;
-        taskAvailable.notify_all();
-    }
+    // {
+    //     std::unique_lock<std::mutex> lock(taskMutex);
+        
+    // }
+    this->runnable = runnable; 
+    this->totalTasks = num_total_tasks;
+    this->currentTaskId = 0;
+    this->completedTasks = 0;
+    this->taskAvailable.notify_all();
     
 
 
     std::unique_lock<std::mutex> lock(taskMutex);
     completeAll.wait(lock, [this] () {
-        return currentTaskId >= totalTasks;
+        return completedTasks >= totalTasks;
     });
 
     // while (true) {

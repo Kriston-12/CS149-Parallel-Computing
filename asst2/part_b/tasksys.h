@@ -6,6 +6,9 @@
 #include <mutex>
 #include <condition_variable>  
 #include <thread>
+#include <unordered_set>
+#include <unordered_map>
+#include <queue>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -64,16 +67,27 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * itasksys.h for documentation of the ITaskSystem interface.
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
-    std::vector<std::thread> threadPool;
-    std::vector<TaskID> completedTasks;
-    std::vector<TaskID> noDependencyTasks;
-    std::atomic<int> totalTasks{0};
-    std::atomic<int> numCompletedTasks{0};
-    IRunnable *runnable;
-    std::mutex taskMutex; 
+    std::vector<std::thread> threadPool; 
+    std::mutex taskMutex;
     std::condition_variable taskAvailable;
+    IRunnable* currentRunnable;
+    std::atomic<int> currentTaskId{0};
+    std::atomic<int> totalTasks{0};
+    std::atomic<bool> stopFlag{false};
+    std::atomic<int> completedTasks{0};
     std::condition_variable completeAll;
-    bool stopFlag{false};
+
+    // Part B
+    
+    struct TaskInfo {
+        IRunnable* runnable;
+        int numTotalTasks;
+    };
+    std::unordered_map<TaskID, TaskInfo> taskMetadata;    // Metadata for each task batch
+    std::unordered_map<TaskID, std::unordered_set<TaskID>> taskDependencies; // Dependencies for each task
+    std::unordered_map<TaskID, int> unfinishedTaskCount;    // Track the number of unfinished dependencies
+    std::queue<TaskID> readyTasks;        // Tasks ready to execute
+    TaskID nextTaskId{0};       // Incremental TaskID generator
 
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);

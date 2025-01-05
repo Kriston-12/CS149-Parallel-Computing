@@ -126,61 +126,66 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
     return "Parallel + Thread Pool + Sleep";
 }
 
-TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): ITaskSystem(num_threads) {
-    //
-    // TODO: CS149 student implementations may decide to perform setup
-    // operations (such as thread pool construction) here.
-    // Implementations are free to add new class member variables
-    // (requiring changes to tasksys.h).
-    //
+TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
+    : ITaskSystem(num_threads)
+{
     threadPool.reserve(num_threads);
     for (int i = 0; i < num_threads; ++i) {
         threadPool.emplace_back([this] () {
             while (true) {
-                // IRunnable *currentRunnable = nullptr;
-                int taskId = -1;
-
-                if (completedTasks >= totalTasks) { //之前没有这个if好像会有 mainthread丢失notify信号的情况导致infinite while loop
-                    completeAll.notify_one();
-                    // break; break是错的，因为只有当主线程call destructor--也就是所有的runnable/tests 都执行过之后才能exit，不然如果subthreads已经exit，那么
-                    // destructor中的join就join不到东西了
-                }
+                TaskID taskId = -1;
+                IRunnable* currentRunnable = nullptr;
+                int numTotalTasks = 0;
 
                 {
-                    std::unique_lock<std::mutex> grd(taskMutex);
-                    // 这里实测 return runnable != nullptr会导致线程执行完毕之后还在这里等待
-                    // 这是因为当destructor被call之后，由于我们下面的所有任务已被分配的if statement导致了runnable已经等于nullptr了
-                    // 
-                    taskAvailable.wait(grd, [this](){return runnable != nullptr || stopFlag.load();}); 
-                    if (currentTaskId < totalTasks) {
-                        // currentRunnable = runnable;
-                        taskId = currentTaskId++;
+                    std::unique_lock<std::mutex> lock(taskMutex);
+                    taskAvailable.wait(lock, [this]() {
+                        return !readyTasks.empty() || stopFlag.load();
+                    });
+
+                    if (stopFlag) {
+                        break;
+                    }
+
+                    if (!readyTasks.empty()) {
+                        taskId = readyTasks.front();
+                        readyTasks.pop();
+
+                        // Retrieve the runnable and number of tasks for this taskId
+                        currentRunnable = taskMetadata[taskId].runnable;
+                        numTotalTasks = taskMetadata[taskId].numTotalTasks;
                     }
                 }
 
-                // if (currentTaskId >= totalTasks) { //这里大错特错了，由于this->runnable = nullptr，所以上面taskAvailable.wait
-                //                         //中 return runnable != nullptr永远是False, 把这个注释了之后 math_operations_in_tight_for_loop_fan_in也过了
-                //                         // 但是好像过不了math_operations_in_tight_for_loop_fewer_tasks
-                //     runnable = nullptr; // 所有任务已分配,
-                // }
-                
-     
-                if (taskId != -1) {
-                    // 执行任务
-                    runnable->runTask(taskId, totalTasks);
-                    completedTasks.fetch_add(1);
-                    if (completedTasks >= totalTasks) { //如果在这里
-                        completeAll.notify_one();
-                    }
-                } 
-                else if (stopFlag) {
-                    break;
-                }
+                if (taskId != -1 && currentRunnable) {
+                    // Execute the task
+                    currentRunnable->runTask(taskId, numTotalTasks);
 
+                    {
+                        std::lock_guard<std::mutex> lock(taskMutex);
+                        completedTasks.fetch_add(1);
+
+                        // Notify dependent tasks
+                        for (auto& taskPair : taskDependencies) {
+                            auto& dependentTask = taskPair.first;
+                            auto& dependencies = taskPair.second;
+                            dependencies.erase(taskId);
+                            if (dependencies.empty() && unfinishedTaskCount[dependentTask] > 0) {
+                                readyTasks.push(dependentTask);
+                                unfinishedTaskCount[dependentTask] = 0; // Mark as ready
+                                taskAvailable.notify_one();
+                            }
+                        }
+                    }
+
+                    // If all tasks are done, notify sync
+                    if (static_cast<size_t>(completedTasks) >= taskMetadata.size()) {
+                        completeAll.notify_all();
+                    }
+                }
             }
         });
     }
-
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -190,6 +195,16 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    stopFlag.store(true);
+    {
+        std::lock_guard<std::mutex> lock(taskMutex);
+        taskAvailable.notify_all(); // Wake up all threads
+    }
+    for (auto& thread : threadPool) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -200,10 +215,27 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
+    // run func should not change a lot from part A.
+    // for (int i = 0; i < num_total_tasks; i++) {
+    //     runnable->runTask(i, num_total_tasks);
+    // }
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    
+    TaskID taskId = nextTaskId++;
+    std::unique_lock<std::mutex> lock(taskMutex); 
+    
+    taskMetadata[taskId] = {runnable, num_total_tasks};
+    for (int i = 0; i < num_total_tasks; ++i) {
+        readyTasks.push(taskId + i); // All tasks are ready
     }
+
+    // lock.unlock(); // not sure if this works yet
+
+    taskAvailable.notify_all();
+
+    completeAll.wait(lock, [this]() {
+        return static_cast<size_t>(completedTasks) >= taskMetadata.size();
+    });
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -213,12 +245,40 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     //
     // TODO: CS149 students will implement this method in Part B.
     //
+    
+    // for (int i = 0; i < num_total_tasks; i++) {
+    //     runnable->runTask(i, num_total_tasks);
+    // }
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    // I let run to be a func that is run without dependency
+    // so in this function, I'll check dependency
+
+
+    TaskID taskId = nextTaskId++;
+
+    std::lock_guard<std::mutex> lock(taskMutex);
+
+    // Store metadata for this task batch
+    taskMetadata[taskId] = {runnable, num_total_tasks};
+
+    if (deps.empty()) {
+        // No dependencies, mark tasks as ready
+        for (int i = 0; i < num_total_tasks; ++i) {
+            readyTasks.push(taskId + i);
+        }
+        taskAvailable.notify_all();
+    } else {
+        // Record dependencies for this task batch
+        for (int i = 0; i < num_total_tasks; ++i) {
+            taskDependencies[taskId + i] = std::unordered_set<TaskID>(deps.begin(), deps.end());
+            unfinishedTaskCount[taskId + i] = deps.size();
+        }
     }
 
-    return 0;
+    return taskId;
+
+
+    // return 0;
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
@@ -227,5 +287,9 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
     // TODO: CS149 students will modify the implementation of this method in Part B.
     //
 
+    std::unique_lock<std::mutex> lock(taskMutex);
+    completeAll.wait(lock, [this]() {
+        return readyTasks.empty() && static_cast<size_t>(completedTasks) >= taskMetadata.size();
+    });
     return;
 }

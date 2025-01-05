@@ -274,7 +274,6 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     for (int i = 0; i < num_threads; ++i) {
         threadPool.emplace_back([this] () {
             while (true) {
-                IRunnable *currentRunnable = nullptr;
                 int taskId = -1;
 
                 if (completedTasks >= totalTasks) { //之前没有这个if好像会有 mainthread丢失notify信号的情况导致infinite while loop
@@ -283,31 +282,21 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
 
                 {
                     std::unique_lock<std::mutex> grd(taskMutex);
-                    // 这里实测 return runnable != nullptr会导致线程执行完毕之后还在这里等待
-                    // 这是因为当destructor被call之后，由于我们下面的所有任务已被分配的if statement导致了runnable已经等于nullptr了
-                    // 
                     taskAvailable.wait(grd, [this](){return runnable != nullptr || stopFlag.load();}); 
                     if (currentTaskId < totalTasks) {
-                        currentRunnable = runnable;
                         taskId = currentTaskId++;
                     }
                 }
-
-                // if (currentTaskId >= totalTasks) { //这里大错特错了，由于this->runnable = nullptr，所以上面taskAvailable.wait
-                //                         //中 return runnable != nullptr永远是False, 把这个注释了之后 math_operations_in_tight_for_loop_fan_in也过了
-                //                         // 但是好像过不了math_operations_in_tight_for_loop_fewer_tasks
-                //     runnable = nullptr; // 所有任务已分配,
-                // }
                 
      
                 if (taskId != -1) {
-                    // 执行任务
-                    currentRunnable->runTask(taskId, totalTasks);
+                    runnable->runTask(taskId, totalTasks);
                     completedTasks.fetch_add(1);
-                    if (completedTasks >= totalTasks) { //如果在这里
+                    if (completedTasks >= totalTasks) { 
                         completeAll.notify_one();
                     }
-                } else if (stopFlag) {
+                } 
+                else if (stopFlag) {
                     break;
                 }
 

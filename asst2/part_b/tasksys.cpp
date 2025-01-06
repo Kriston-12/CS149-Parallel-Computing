@@ -1,5 +1,5 @@
 #include "tasksys.h"
-
+#include <iostream>
 
 IRunnable::~IRunnable() {}
 
@@ -136,7 +136,7 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                 TaskID taskId = -1;
                 IRunnable* currentRunnable = nullptr;
                 int numTotalTasks = 0;
-
+               
                 {
                     std::unique_lock<std::mutex> lock(taskMutex);
                     taskAvailable.wait(lock, [this]() {
@@ -148,27 +148,41 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                     }
 
                     if (!readyTasks.empty()) {
+                        // std::cout << "Segfault might happen here\n";
                         taskId = readyTasks.front();
                         readyTasks.pop();
 
                         // Retrieve the runnable and number of tasks for this taskId
+
                         currentRunnable = taskMetadata[taskId].runnable;
                         numTotalTasks = taskMetadata[taskId].numTotalTasks;
                     }
                 }
 
-                if (taskId != -1 && currentRunnable) {
+                if (stopFlag) {
+                    break;
+                }
+                
+                std::cout << "It reaches here just before task running\n";
+                if (taskId != -1) {
                     // Execute the task
+                    std::cout << "task running errors, \n";
+                    if (!currentRunnable) {
+                        std::cout << "currentRunnable is nullptr\n"; 
+                    }
                     currentRunnable->runTask(taskId, numTotalTasks);
+                    std::cout << "it cannot reach here\n";
+                    completedTasks.fetch_add(1);
 
                     {
                         std::lock_guard<std::mutex> lock(taskMutex);
-                        completedTasks.fetch_add(1);
-
+                        // completedTasks.fetch_add(1);
+                        std::cout << "It reaches after running tasks\n";
                         // Notify dependent tasks
                         for (auto& taskPair : taskDependencies) {
                             auto& dependentTask = taskPair.first;
                             auto& dependencies = taskPair.second;
+                            std::cout << "Enters here just before clear the dependencies\n";
                             dependencies.erase(taskId);
                             if (dependencies.empty() && unfinishedTaskCount[dependentTask] > 0) {
                                 readyTasks.push(dependentTask);
@@ -195,6 +209,7 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    std::cout << "It enteres the destructor" << std::endl;
     stopFlag.store(true);
     {
         std::lock_guard<std::mutex> lock(taskMutex);
@@ -221,16 +236,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // }
 
     
-    TaskID taskId = nextTaskId++;
+    TaskID baseTaskId = nextTaskId++;
     std::unique_lock<std::mutex> lock(taskMutex); 
     
-    taskMetadata[taskId] = {runnable, num_total_tasks};
-    for (int i = 0; i < num_total_tasks; ++i) {
-        readyTasks.push(taskId + i); // All tasks are ready
+    
+    for (int i = 0; i < num_total_tasks; ++i) {  // this might be slow, since need to push all numbers
+        readyTasks.push(baseTaskId + i); // All tasks are ready
+        taskMetadata[baseTaskId + i] = {runnable, num_total_tasks};
     }
 
     // lock.unlock(); // not sure if this works yet
-
+    std::cout << "It enters the run functin that notifies all\n" << std::endl;
     taskAvailable.notify_all();
 
     completeAll.wait(lock, [this]() {

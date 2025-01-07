@@ -9,6 +9,8 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <queue>
+#include <vector>
+
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -79,15 +81,28 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
     // Part B
     
-    struct TaskInfo {
-        IRunnable* runnable;
-        int numTotalTasks;
+    struct Task {
+        // TaskID basedId;
+        std::atomic<int> numTotalTasks;
+        IRunnable * runnable;
+        std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on)
+        std::atomic<int> completedCount{0}; // if this is equal to numTotalTasks, then this task is completed.
+
+        Task() = default;
+        Task(int numTotalTasks, IRunnable * runnable, const std::unordered_set<TaskID>& deps): numTotalTasks(numTotalTasks), runnable(runnable), deps(deps) {}
+
+        //default move constructor and move assignment
+        Task(Task&&) = default;
+        Task& operator=(Task&&) = default;
+
+        // Delete copy constructor and copy assignment operator
+        Task(const Task&) = delete;
+        Task& operator=(const Task&) = delete;
     };
-    std::unordered_map<TaskID, TaskInfo> taskMetadata;    // Metadata for each task batch
-    std::unordered_map<TaskID, std::unordered_set<TaskID>> taskDependencies; // Dependencies for each task
-    std::unordered_map<TaskID, int> unfinishedTaskCount;    // Track the number of unfinished dependencies
-    std::queue<TaskID> readyTasks;        // Tasks ready to execute
-    TaskID nextTaskId{0};       // Incremental TaskID generator
+
+    std::unordered_map<TaskID, Task> tasks;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 
+    std::queue<std::pair<TaskID, int>> readyQueue;        //Queue of (batchID, taskIndex)
+    TaskID nextBatchId{0};       // Incremental TaskID generator
 
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);

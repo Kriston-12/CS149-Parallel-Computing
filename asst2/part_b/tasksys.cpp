@@ -1,5 +1,5 @@
 #include "tasksys.h"
-#include <iostream>
+
 
 IRunnable::~IRunnable() {}
 
@@ -147,39 +147,51 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                         break;
                     }
 
+                    // std::cout << "before readyQueue pop\n"; 
                     // auto [batch, index] = readyQueue.front(); // cpp 17 feature, not sure if works in cpp11
                     auto batchPair = readyQueue.front();
                     readyQueue.pop();
                     // assigning code below could be put out of the block for speeding.
                     batchId = batchPair.first;
                     taskIndex = batchPair.second;
-                    currentTask = &tasks[taskIndex];
+                    currentTask = &(tasks[taskIndex]);
+                    // currentTask->runnable = tasks[taskIndex].runnable;
                 }
 
-                if (stopFlag) {
-                    break;
-                }
+                // if (stopFlag) {
+                //     break;
+                // }
 
                 if (currentTask) {
+                    if (currentTask->runnable == nullptr) {
+                        std::cerr << "Runnable is nullptr for batchId=" << batchId << ", taskIndex=" << taskIndex << std::endl;
+                    }
                     currentTask->runnable->runTask(taskIndex, currentTask->numTotalTasks);
+                    std::cout << "Runnable is not nullptr, batchId=" << batchId << ", taskIndex="  << taskIndex << std::endl;
                     ++(currentTask->completedCount);
-
+                    std::cout << "after running tasks\n";
                     // if completedCount reaches totalTasks, update dependencies
                     if (currentTask->completedCount == currentTask->numTotalTasks) {
+                        // bool notified = false;
                         for (auto& taskPair : tasks) { // for all tasks that dependent on the task with the batchID, erase the task from their dependencies
                             TaskID dependentBatchId = taskPair.first;  // Get the batch ID
                             auto& task = taskPair.second; 
-                            // taskMutex.lock(); might not be necessary? since there is no same bathId
+                            // taskMutex.lock(); // might not be necessary? since there is no same bathId
                             task.deps.erase(batchId); 
+                            taskMutex.lock();
                             if (task.deps.empty()) {  // if no dependency, put them in the readyQueue, here do need a lock
-                                taskMutex.lock();
                                 for (int i = 0; i < task.numTotalTasks; ++i) {
                                     // readyQueue.push({dependentBatchId, i});
                                     readyQueue.push(std::make_pair(dependentBatchId, i));
                                 }
-                                taskMutex.unlock();
-                                taskAvailable.notify_all();
+                                // notified = true;
                             }
+                            taskMutex.unlock();
+                            taskAvailable.notify_all();
+                            // if (notified) {
+                            //     taskAvailable.notify_all();
+                            //     notified = false; // Reset notified to avoid multiple notifications
+                            // }
                         }
                     }
                 }
@@ -209,32 +221,23 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
-
-
-    //
-    // TODO: CS149 students will modify the implementation of this
-    // method in Parts A and B.  The implementation provided below runs all
-    // tasks sequentially on the calling thread.
-    //
     // run func should not change a lot from part A.
     // for (int i = 0; i < num_total_tasks; i++) {
     //     runnable->runTask(i, num_total_tasks);
     // }
+    // Add a new task batch to the metadata
+    // tasks[batchId] = std::move(Task(num_total_tasks, runnable, {}));
+    // tasks[batchId] = Task(num_total_tasks, runnable, std::unordered_set<TaskID>());
+    // tasks.emplace(batchId, Task(num_total_tasks, runnable, {}));
+    // tasks.emplace(batchId, Task(num_total_tasks, runnable, std::unordered_set<TaskID>()));
 
-    
     TaskID batchId = nextBatchId++; // make sure we are using the global nextBatchId, so each batchId is unique and hashable for tasks<batchId, task>
     std::unique_lock<std::mutex> lock(taskMutex); 
     
-    // Add a new task batch to the metadata
-    // tasks[batchId] = std::move(Task(num_total_tasks, runnable, {}));
-    // tasks[batchId] = Task(num_total_tasks, runnable, {});
-
-    // tasks.emplace(batchId, Task(num_total_tasks, runnable, {}));
-    // tasks.emplace(batchId, Task(num_total_tasks, runnable, std::unordered_set<TaskID>()));
     tasks.emplace(
-    std::piecewise_construct,
-    std::forward_as_tuple(batchId),
-    std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
+        std::piecewise_construct,
+        std::forward_as_tuple(batchId),
+        std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
     );
     
     for (int i = 0; i < num_total_tasks; ++i) {
@@ -242,6 +245,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
         readyQueue.push(std::make_pair(batchId, i));
     }
 
+    std:: cout << "call run function to notify all\n"; 
     taskAvailable.notify_all();
 
     completeAll.wait(lock, [this, batchId]() { // batchId should be added in the capture list to be captured.
@@ -288,8 +292,6 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     } 
     return batchId;
 
-
-    // return 0;
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {

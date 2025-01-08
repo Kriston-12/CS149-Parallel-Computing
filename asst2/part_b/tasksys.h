@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <queue>
 #include <vector>
-
+#include <iostream>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -85,19 +85,42 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         // TaskID basedId;
         std::atomic<int> numTotalTasks;
         IRunnable * runnable;
+        // std::shared_ptr<IRunnable> runnable;
         std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on)
         std::atomic<int> completedCount{0}; // if this is equal to numTotalTasks, then this task is completed.
 
         Task() = default;
-        Task(int numTotalTasks, IRunnable * runnable, const std::unordered_set<TaskID>& deps): numTotalTasks(numTotalTasks), runnable(runnable), deps(deps) {}
+        Task(int numTotalTasks, IRunnable * runnable, const std::unordered_set<TaskID>& deps): numTotalTasks(numTotalTasks), runnable(runnable), deps(deps) {
+            std::cout << "task constructor is called\n";
+            if (runnable == nullptr) {
+                std::cout << "nullptr construction, error!!\n";
+            }
+        }
 
-        //default move constructor and move assignment
-        Task(Task&&) = default;
-        Task& operator=(Task&&) = default;
+        // default move constructor and move assignment
+        // Task(Task&&) = default;
+        Task(Task&& other) noexcept
+        :numTotalTasks(other.numTotalTasks.load()),
+        runnable(std::move(other.runnable)),
+        deps(std::move(other.deps)),
+        completedCount(other.completedCount.load()) {
+            other.runnable = nullptr;  // Clear the source's runnable pointer
+        }
+
+        Task& operator=(Task&& other) noexcept {
+            if (this != &other) {
+                numTotalTasks = other.numTotalTasks.load();
+                runnable = std::move(other.runnable);
+                deps = std::move(other.deps);
+                completedCount = other.completedCount.load();
+                other.runnable = nullptr;
+            }
+            return *this;
+        }
 
         // Delete copy constructor and copy assignment operator
-        Task(const Task&) = delete;
-        Task& operator=(const Task&) = delete;
+        // Task(const Task&) = delete;
+        // Task& operator=(const Task&) = delete;
     };
 
     std::unordered_map<TaskID, Task> tasks;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 

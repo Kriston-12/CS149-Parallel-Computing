@@ -123,9 +123,12 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         // Task& operator=(const Task&) = delete;
     };
 
-    std::unordered_map<TaskID, Task> tasks;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 
+    std::unordered_map<TaskID, Task> tasksWithDeps;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 
+    std::unordered_map<TaskID, Task> tasksWithoutDeps;
     std::queue<std::pair<TaskID, int>> readyQueue;        //Queue of (batchID, taskIndex)
-    TaskID nextBatchId{0};       // Incremental TaskID generator
+    std::atomic<TaskID> nextBatchId{0};       // Incremental TaskID generator, since emplace(std::atomic<>) is not allowed, we could not use atomic here. Emplace will create a std::pair<keytype, valuetype> and uses copy constructor of atomic, but atomic deleted copy constructor
+    std::atomic<int> totalCompletedBatches{0};
+
 
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);

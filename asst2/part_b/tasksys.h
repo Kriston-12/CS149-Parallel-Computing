@@ -86,15 +86,15 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::atomic<int> numTotalTasks;
         IRunnable * runnable;
         // std::shared_ptr<IRunnable> runnable;
-        std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on)
+        std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on), this TaskID should be batchId
         std::atomic<int> completedCount{0}; // if this is equal to numTotalTasks, then this task is completed.
 
         Task() = default;
         Task(int numTotalTasks, IRunnable * runnable, const std::unordered_set<TaskID>& deps): numTotalTasks(numTotalTasks), runnable(runnable), deps(deps) {
-            std::cout << "task constructor is called\n";
-            if (runnable == nullptr) {
-                std::cout << "nullptr construction, error!!\n";
-            }
+            // std::cout << "task constructor is called\n";
+            // if (runnable == nullptr) {
+            //     std::cout << "nullptr construction, error!!\n";
+            // }
         }
 
         // default move constructor and move assignment

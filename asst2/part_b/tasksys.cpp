@@ -136,62 +136,58 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                 TaskID batchId = -1;
                 int taskIndex = -1;
                 Task* currentTask = nullptr;
-        
-                {
-                    std::unique_lock<std::mutex> lock(taskMutex);
-                    taskAvailable.wait(lock, [this]() {
-                        return !readyQueue.empty() || stopFlag.load();
-                    });
-
-                    if (stopFlag) {
-                        break;
+                // std::cout<<"this is to show the threads are keeping spinning\n";//this stops at some points 
+                {   
+                    if (readyQueue.empty()) { 
+                        std::unique_lock<std::mutex> lock(taskMutex);
+                        taskAvailable.wait(lock, [this]() {
+                        // std::cout << "All threads are waiting here\n"; // this is printed at the end, which means missing signals.
+                            return !readyQueue.empty() || stopFlag.load();
+                        });
                     }
-
-                    // std::cout << "before readyQueue pop\n"; 
-                    // auto [batch, index] = readyQueue.front(); // cpp 17 feature, not sure if works in cpp11
-                    auto batchPair = readyQueue.front();
-                    readyQueue.pop();
-                    // assigning code below could be put out of the block for speeding.
-                    batchId = batchPair.first;
-                    taskIndex = batchPair.second;
-                    currentTask = &(tasks[taskIndex]);
-                    // currentTask->runnable = tasks[taskIndex].runnable;
+                    else { //when one thread accesses the else, other threads might already change the readyQueue, we cannot assume readyQueue is empty here
+                        if (stopFlag) {
+                            break;
+                        }
+                        // std::cout << "before readyQueue pop\n"; 
+                        // auto [batch, index] = readyQueue.front(); // cpp 17 feature, does not work in cpp11
+                        std::unique_lock<std::mutex> lock(taskMutex);
+                        auto batchPair = readyQueue.front();
+                        readyQueue.pop();
+                        // assigning code below could be put out of the block for speeding.
+                        batchId = batchPair.first;
+                        taskIndex = batchPair.second;
+                        currentTask = &(tasks[batchId]);
+                    }
                 }
 
-                // if (stopFlag) {
-                //     break;
-                // }
+                if (stopFlag) {
+                    break;
+                }
 
                 if (currentTask) {
-                    if (currentTask->runnable == nullptr) {
-                        std::cerr << "Runnable is nullptr for batchId=" << batchId << ", taskIndex=" << taskIndex << std::endl;
-                    }
                     currentTask->runnable->runTask(taskIndex, currentTask->numTotalTasks);
-                    std::cout << "Runnable is not nullptr, batchId=" << batchId << ", taskIndex="  << taskIndex << std::endl;
                     ++(currentTask->completedCount);
-                    std::cout << "after running tasks\n";
+                    // std::cout << "----------------------------\n";
+                        
                     // if completedCount reaches totalTasks, update dependencies
                     if (currentTask->completedCount == currentTask->numTotalTasks) {
-                        // bool notified = false;
+                        // completeAll.notify_one(); 这里可能有问题，因为run函数中有多个completeAll在等待，但是获取lock的顺序是固定的，因为queue是FIFO，所以可能没问题
+                        // std::cout << "completedCount reach total tasks\n";
+                        std::unique_lock<std::mutex> lock(taskMutex);
                         for (auto& taskPair : tasks) { // for all tasks that dependent on the task with the batchID, erase the task from their dependencies
                             TaskID dependentBatchId = taskPair.first;  // Get the batch ID
                             auto& task = taskPair.second; 
-                            // taskMutex.lock(); // might not be necessary? since there is no same bathId
-                            task.deps.erase(batchId); 
-                            taskMutex.lock();
-                            if (task.deps.empty()) {  // if no dependency, put them in the readyQueue, here do need a lock
+                            // taskMutex.lock(); // might not be necessary? 
+                            task.deps.erase(batchId);   // a map erase a non existing id is safe
+                            // taskMutex.lock(); // if lock here the same task might push same batchId multiple times, 这里lock我想了半天还是应该放外面
+                            if (task.deps.empty()) {  
                                 for (int i = 0; i < task.numTotalTasks; ++i) {
                                     // readyQueue.push({dependentBatchId, i});
                                     readyQueue.push(std::make_pair(dependentBatchId, i));
                                 }
-                                // notified = true;
                             }
-                            taskMutex.unlock();
-                            taskAvailable.notify_all();
-                            // if (notified) {
-                            //     taskAvailable.notify_all();
-                            //     notified = false; // Reset notified to avoid multiple notifications
-                            // }
+                            taskAvailable.notify_all(); 
                         }
                     }
                 }
@@ -242,15 +238,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     
     for (int i = 0; i < num_total_tasks; ++i) {
         // readyQueue.push({batchId, i}); // seems not viable in c++11
-        readyQueue.push(std::make_pair(batchId, i));
+        readyQueue.emplace(batchId, i);
     }
 
-    std:: cout << "call run function to notify all\n"; 
+    // const std::deque<std::pair<int, int>>& container = *(reinterpret_cast<const std::deque<std::pair<int, int>>*>(&readyQueue));
+
     taskAvailable.notify_all();
 
     completeAll.wait(lock, [this, batchId]() { // batchId should be added in the capture list to be captured.
         return tasks[batchId].completedCount == tasks[batchId].numTotalTasks;
     });
+    std::cout << "reach the end of run function\n"; // it does not reach here
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

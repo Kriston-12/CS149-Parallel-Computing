@@ -83,7 +83,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     
     struct Task {
         // TaskID basedId;
-        std::atomic<int> numTotalTasks;
+        int numTotalTasks;
         IRunnable * runnable;
         // std::shared_ptr<IRunnable> runnable;
         std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on), this TaskID should be batchId
@@ -100,16 +100,18 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         // default move constructor and move assignment
         // Task(Task&&) = default;
         Task(Task&& other) noexcept
-        :numTotalTasks(other.numTotalTasks.load()),
+        :numTotalTasks(other.numTotalTasks),
         runnable(std::move(other.runnable)),
         deps(std::move(other.deps)),
         completedCount(other.completedCount.load()) {
+            // std::cout << "Shift constructor is called\n";
             other.runnable = nullptr;  // Clear the source's runnable pointer
         }
 
         Task& operator=(Task&& other) noexcept {
+            // std::cout << "Shift operator is called\n";
             if (this != &other) {
-                numTotalTasks = other.numTotalTasks.load();
+                numTotalTasks = other.numTotalTasks;
                 runnable = std::move(other.runnable);
                 deps = std::move(other.deps);
                 completedCount = other.completedCount.load();
@@ -119,15 +121,15 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         }
 
         // Delete copy constructor and copy assignment operator
-        // Task(const Task&) = delete;
-        // Task& operator=(const Task&) = delete;
+        Task(const Task&) = delete;
+        Task& operator=(const Task&) = delete;
     };
 
     std::unordered_map<TaskID, Task> tasksWithDeps;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 
     std::unordered_map<TaskID, Task> tasksWithoutDeps;
     std::queue<std::pair<TaskID, int>> readyQueue;        //Queue of (batchID, taskIndex)
-    std::atomic<TaskID> nextBatchId{0};       // Incremental TaskID generator, since emplace(std::atomic<>) is not allowed, we could not use atomic here. Emplace will create a std::pair<keytype, valuetype> and uses copy constructor of atomic, but atomic deleted copy constructor
-    std::atomic<int> totalCompletedBatches{0};
+    TaskID nextBatchId{0};       // Incremental TaskID generator, since emplace(std::atomic<>) is not allowed, we could not use atomic here. Emplace will create a std::pair<keytype, valuetype> and uses copy constructor of atomic, but atomic deleted copy constructor
+    int totalCompletedBatches{0};
 
 
     public:

@@ -172,8 +172,9 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                     if (currentTask->completedCount == currentTask->numTotalTasks) {
                         completeAll.notify_one(); //这里可能有问题，因为run函数中有多个completeAll在等待，但是获取lock的顺序是固定的，因为queue是FIFO，所以可能没问题
                         // std::cout << "completedCount reach total tasks\n";
-                        ++totalCompletedBatches;
+                        
                         std::unique_lock<std::mutex> lock(taskMutex);
+                        ++totalCompletedBatches;
                         for (auto& taskPair : tasksWithDeps) { // for all tasks that dependent on the task with the batchID, erase the task from their dependencies
                             TaskID dependentBatchId = taskPair.first;  // Get the batch ID
                             auto& task = taskPair.second; 
@@ -233,20 +234,24 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // tasks.emplace(batchId, Task(num_total_tasks, runnable, std::unordered_set<TaskID>()));
 
     
-    TaskID batchId = nextBatchId++;
+    // TaskID batchId = nextBatchId++;
     std::unique_lock<std::mutex> lock(taskMutex); 
-    // TaskID batchId = nextBatchId++; // make sure we are using the global nextBatchId, so each batchId is unique and hashable for tasks<batchId, task>
+    TaskID batchId = nextBatchId++; // make sure we are using the global nextBatchId, so each batchId is unique and hashable for tasks<batchId, task>
     
+
+    // std::cout << "tasksWithoutDeps Emplace is called in run function\n";
+    tasksWithoutDeps.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(batchId),
+        std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
+    );
+
     // tasksWithoutDeps.emplace(
-    //     std::piecewise_construct,
-    //     std::forward_as_tuple(batchId),
-    //     std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
+    //     batchId,
+    //     Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
     // );
 
-    tasksWithoutDeps.emplace(
-        batchId,
-        Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
-    );
+    // std::cout << "emplace call finish\n";
     
     for (int i = 0; i < num_total_tasks; ++i) {
         // readyQueue.push({batchId, i}); // seems not viable in c++11
@@ -282,29 +287,26 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     
     std::unordered_set<TaskID> dependencies(deps.begin(), deps.end()); // copy the dependencies, must copy bc we are using set, but the given parameter is vector
 
-    TaskID batchId = nextBatchId++;
+    // TaskID batchId = nextBatchId++;
     std::lock_guard<std::mutex> lock(taskMutex);
+    TaskID batchId = nextBatchId++;
     
 
     // Store metadata for this task batch
     // tasks.emplace(batchId, Task(num_total_tasks, runnable, dependencies));
-    // tasksWithoutDeps.emplace(
-    // std::piecewise_construct,
-    // std::forward_as_tuple(batchId),
-    // std::forward_as_tuple(num_total_tasks, runnable, deps)
-    // );
 
     if (deps.empty()) {
+
         // tasksWithoutDeps.emplace(
-        // std::piecewise_construct,
-        // std::forward_as_tuple(batchId),
-        // std::forward_as_tuple(num_total_tasks, runnable, dependencies) 
+        // batchId,
+        // Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
         // );
-        tasksWithoutDeps.emplace(
-        batchId,
-        Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
-        );
         // No dependencies, mark tasks as ready
+        tasksWithoutDeps.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(batchId),
+        std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
+        );
         for (int i = 0; i < num_total_tasks; ++i) {
             // readyQueue.push({batchId, i});
             readyQueue.push(std::make_pair(batchId, i));
@@ -312,9 +314,14 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
         taskAvailable.notify_all();
     }
     else {
+        // tasksWithDeps.emplace(
+        // batchId,
+        // Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
+        // );
         tasksWithDeps.emplace(
-        batchId,
-        Task(num_total_tasks, runnable, std::unordered_set<TaskID>())
+        std::piecewise_construct,
+        std::forward_as_tuple(batchId),
+        std::forward_as_tuple(num_total_tasks, runnable, std::unordered_set<TaskID>())
         );
     } 
     return batchId;

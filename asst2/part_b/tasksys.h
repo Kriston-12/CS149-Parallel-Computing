@@ -71,6 +71,7 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     std::vector<std::thread> threadPool; 
     std::mutex taskMutex;
+    std::mutex readyQueueMutex;
     std::condition_variable taskAvailable;
     IRunnable* currentRunnable;
     std::atomic<int> currentTaskId{0};

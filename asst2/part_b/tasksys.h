@@ -62,6 +62,46 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
         void sync();
 };
 
+// WaitingTask - Represents a task waiting for dependencies to complete
+struct WaitingTask {
+    TaskID id;
+    TaskID dependTaskID;
+    IRunnable* runnable;
+    int numTotalTasks;
+
+    WaitingTask(TaskID id, TaskID dependency, IRunnable* runnable, int numTotalTasks)
+    : id(id), dependTaskID(dependency), runnable(runnable), numTotalTasks(numTotalTasks){}
+
+    // Prioritize tasks with smaller depdendent Task ID 
+    //-- used for priority queue to pop up (if returns True, the queue will priorize the second parameter(other)), otherwise the first
+    bool operator<(const WaitingTask& other) const {
+        return dependTaskID > other.dependTaskID;
+    }
+};
+
+// ReadyTask - represents a task ready to execute
+
+struct ReadyTask {
+    TaskID id;
+    IRunnable* runnable;
+    std::atomic<int> currentTask;
+    int numTotalTasks;
+
+    ReadyTask() = default;
+    ReadyTask(TaskID id, IRunnable* runnable, int numTotalTasks)
+    : id(id), runnable(runnable), currentTask(0), numTotalTasks(numTotalTasks) {}
+
+    ReadyTask& operator=(const ReadyTask& other) {
+        if (this != &other) {
+            id = other.id;
+            runnable = other.runnable;
+            numTotalTasks = other.numTotalTasks;
+            currentTask.store(other.currentTask.load());
+        }
+        return *this;
+    }
+};
+
 /*
  * TaskSystemParallelThreadPoolSleeping: This class is the student's
  * optimized implementation of a parallel task execution engine that uses
@@ -69,73 +109,35 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * itasksys.h for documentation of the ITaskSystem interface.
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
-    std::vector<std::thread> threadPool; 
-    std::mutex taskMutex;
-    std::mutex readyQueueMutex;
-    std::condition_variable taskAvailable;
-    IRunnable* currentRunnable;
-    std::atomic<int> currentTaskId{0};
-    std::atomic<int> totalTasks{0};
-    std::atomic<bool> stopFlag{false};
-    std::atomic<int> completedTasks{0};
-    std::condition_variable completeAll;
-
-    // Part B
     
-    struct Task {
-        // TaskID basedId;
-        int numTotalTasks;
-        IRunnable * runnable;
-        // std::shared_ptr<IRunnable> runnable;
-        std::unordered_set<TaskID> deps; //Dependencies (other tasks that this task is dependent on), this TaskID should be batchId
-        std::atomic<int> completedCount{0}; // if this is equal to numTotalTasks, then this task is completed.
+    std::atomic<bool> killed{false}; //notify workerthreads when tasks are done
 
-        Task() = default;
-        Task(int numTotalTasks, IRunnable * runnable, const std::unordered_set<TaskID>& deps): numTotalTasks(numTotalTasks), runnable(runnable), deps(deps) {
-            // std::cout << "task constructor is called\n";
-            // if (runnable == nullptr) {
-            //     std::cout << "nullptr construction, error!!\n";
-            // }
-        }
+    std::unordered_map<TaskID, std::pair<int, int>> taskProcess; // {TaskID -> finishedCount, totalCount}
+    std::mutex taskProcessMutex;
 
-        // default move constructor and move assignment
-        // Task(Task&&) = default;
-        Task(Task&& other) noexcept
-        :numTotalTasks(other.numTotalTasks),
-        runnable(std::move(other.runnable)),
-        deps(std::move(other.deps)),
-        completedCount(other.completedCount.load()) {
-            // std::cout << "Shift constructor is called\n";
-            other.runnable = nullptr;  // Clear the source's runnable pointer
-        }
+    // TaskID management
+    TaskID finishedTaskID{-1};
+    TaskID nextTaskID{0};
+    std::mutex taskIDMutex;
 
-        Task& operator=(Task&& other) noexcept {
-            // std::cout << "Shift operator is called\n";
-            if (this != &other) {
-                numTotalTasks = other.numTotalTasks;
-                runnable = std::move(other.runnable);
-                deps = std::move(other.deps);
-                completedCount = other.completedCount.load();
-                other.runnable = nullptr;
-            }
-            return *this;
-        }
+    // Waiting queue for tasks
+    std::priority_queue<WaitingTask> waitingQueue;
+    std::mutex waitingQueueMutex;
 
-        // Delete copy constructor and copy assignment operator
-        Task(const Task&) = delete;
-        Task& operator=(const Task&) = delete;
-    };
+    // Ready queue for tasks ready to run
+    std::queue<ReadyTask> readyQueue; 
+    std::mutex readyQueueMutex;
 
-    std::unordered_map<TaskID, Task> tasksWithDeps;      // Map of BatchId to Task, I wanna do it Task->TaskID, but not hashable even after defining ==operator 
-    std::unordered_map<TaskID, Task> tasksWithoutDeps;
-    std::queue<std::pair<TaskID, int>> readyQueue;        //Queue of (batchID, taskIndex)
-    TaskID nextBatchId{0};       // Incremental TaskID generator, since emplace(std::atomic<>) is not allowed, we could not use atomic here. Emplace will create a std::pair<keytype, valuetype> and uses copy constructor of atomic, but atomic deleted copy constructor
-    int totalCompletedBatches{0};
+    // The worker threadPool 
+    std::vector<std::thread> threadPool; 
 
+    std::condition_variable taskAvailable;
+    std::condition_variable finishedCondition;
 
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();
+        void workerThread();
         const char* name();
         void run(IRunnable* runnable, int num_total_tasks);
         TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

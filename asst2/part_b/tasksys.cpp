@@ -151,20 +151,19 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             }
             
             if (readyQueue.empty()) {
-                // std::cout << "Wait till de\n";
+                std::cout << "Wait till de\n";
                 taskAvailable.wait(readyLock); // release the lock, and let the thread sleep if the readyQueue is empty
             }
         }
 
         if (!readyQueue.empty()) {
-            task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
             std::unique_lock<std::mutex> readyLock(readyQueueMutex);
-            if (readyQueue.front().currentTask >= readyQueue.front().numTotalTasks) {
-                // std::cout << "Abort happened befre readyQueue.pop()\n"; this might not be the problem
-                readyQueue.pop();  // only when the current task is finished, then pop it out
+            task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
+            if (task.currentTask >= task.numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
+                readyQueue.pop();  // 这里如果有些thread还在执行这个task的时候把它pop掉了可能有问题
             }
             else {
-                readyQueue.front().currentTask++;
+                task.currentTask++; // this was  readyQueue.front().currentTask++
                 hasTask = true;
             }
         }
@@ -172,7 +171,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
         if (hasTask) {
  
             // std::cout << "Abortion happened before runTask\n";
-            // std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
+            std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
             task.runnable->runTask(task.currentTask, task.numTotalTasks);
 
             // Update the most recently finished taskid--finishedTaskID
@@ -221,6 +220,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     std::vector<TaskID> noDeps;
     runAsyncWithDeps(runnable, num_total_tasks, noDeps);
     sync();  // much cleaner
+    std::cout << "run function finished\n";
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -248,4 +248,6 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
 
     std::unique_lock<std::mutex> lock(taskProcessMutex);
     finishedCondition.wait(lock, [this]() {return finishedTaskID + 1 == nextTaskID;});
+
+    std::cout << "thread does not reach here\n"; // it does reach here
 }

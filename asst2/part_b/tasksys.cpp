@@ -132,16 +132,30 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
     while (!killed) {
         ReadyTask task;
         bool hasTask = false;
+        // bool wait = false;
 
-        {
+        {   
+            // if (readyQueue.empty()) {
+            //     std::cout << "this works" << std::endl; // this is printed, which means readyQueue is not cleared
+            // }
+            // if (waitingQueue.empty()) {
+            //     std::cout << "this shouldn't be the case\n"; // this is printed, 
+            // }
+            
             std::unique_lock<std::mutex> readyLock(readyQueueMutex);
+            if (readyQueue.empty() && (waitingQueue.empty() || waitingQueue.top().dependTaskID > finishedTaskID)) {
+                // std::cout << "Wait till de\n";
+                taskAvailable.wait(readyLock); // release the lock, and let the thread sleep if the readyQueue is empty
+            }
             if (readyQueue.empty()) {
                 std::unique_lock<std::mutex> waitingLock(waitingQueueMutex);
                 while (!waitingQueue.empty()) {
                     const auto& nextTask = waitingQueue.top();
                     if (nextTask.dependTaskID > finishedTaskID) break; // haven't finished its dependency
                     // std::cout << "before adding tasks\n";
+                    // std::cout << "nextTask.id before readyQueue emplace is " << nextTask.id << std::endl;
                     readyQueue.emplace(nextTask.id, nextTask.runnable, nextTask.numTotalTasks);
+                    // std::cout << "readyQueue.front().id afterrrrrrr emplace " << readyQueue.front().id << std::endl;
                     taskAvailable.notify_one(); 
                     // every task.id is different, so shouln't have any data race here   
                     taskProcess[nextTask.id] = {0, nextTask.numTotalTasks}; // might need a taskMutex here //nextTaskID = nextTask.id + 1
@@ -149,29 +163,29 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
                     waitingQueue.pop();
                 }
             }
-            
-            if (readyQueue.empty()) {
-                std::cout << "Wait till de\n";
-                taskAvailable.wait(readyLock); // release the lock, and let the thread sleep if the readyQueue is empty
-            }
-        }
-
-        if (!readyQueue.empty()) {
-            std::unique_lock<std::mutex> readyLock(readyQueueMutex);
-            task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
-            if (task.currentTask >= task.numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
-                readyQueue.pop();  // 这里如果有些thread还在执行这个task的时候把它pop掉了可能有问题
-            }
             else {
-                task.currentTask++; // this was  readyQueue.front().currentTask++
-                hasTask = true;
+                // std::cout << "now readyqueue is not empty, task.currentTask is " << task.currentTask << "; totaltasks is " << task.numTotalTasks << std::endl;
+                task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
+                if (task.currentTask >= task.numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
+                    // std::cout << "now readyqueue is not empty, task.currentTask is " << task.currentTask << "; totaltasks is " << task.numTotalTasks << std::endl; // this is never printed, which means curretTask is not added 
+                    readyQueue.pop();  // 这里如果有些thread还在执行这个task的时候把它pop掉了可能有问题
+                }
+                else {
+                    // task.currentTask++; // this was wrong, task is a copy of readyQueue.front(), so task.currentTask++ would not affect the real task in readyQueue.
+                    readyQueue.front().currentTask++;
+                    // std::cout << "currentTask is " << task.currentTask << "; numtotalTasks is " << task.numTotalTasks << std::endl;
+                    // std::cout << "task change might not affect readyQueue.front().task; " << "readyQueue.front.task.currentTask is " << readyQueue.front().currentTask << std::endl;
+                    hasTask = true;
+                }
             }
+            
+
         }
 
         if (hasTask) {
  
             // std::cout << "Abortion happened before runTask\n";
-            std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
+            // std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
             task.runnable->runTask(task.currentTask, task.numTotalTasks);
 
             // Update the most recently finished taskid--finishedTaskID
@@ -182,7 +196,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             if (++finished == total) { // Task batch completed
                 taskProcess.erase(task.id);
                 finishedTaskID = std::max(finishedTaskID, task.id); // always track the most recently finished taskID so that we can check dependency 
-                std::cout << "finishedTaskID is " << finishedTaskID << std::endl;
+                // std::cout << "finishedTaskID is " << finishedTaskID << std::endl;
                 finishedCondition.notify_one();
             }
         }
@@ -220,7 +234,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     std::vector<TaskID> noDeps;
     runAsyncWithDeps(runnable, num_total_tasks, noDeps);
     sync();  // much cleaner
-    std::cout << "run function finished\n";
+    // std::cout << "run function finished\n";
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -232,10 +246,17 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
 
     {
         std::unique_lock<std::mutex> lock(waitingQueueMutex);
+        // std::cout << "nextTaskID is " << nextTaskID << std::endl;
         waitingQueue.emplace(nextTaskID, dependency, runnable, num_total_tasks);
     }                                                    
 
     taskAvailable.notify_all();
+
+    // {
+    //     std::unique_lock<std::mutex> readyLock(readyQueueMutex);
+    //     taskAvailable.notify_all();
+    // }
+    
     return nextTaskID++;
 
 }
@@ -249,5 +270,5 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
     std::unique_lock<std::mutex> lock(taskProcessMutex);
     finishedCondition.wait(lock, [this]() {return finishedTaskID + 1 == nextTaskID;});
 
-    std::cout << "thread does not reach here\n"; // it does reach here
+    // std::cout << "thread does not reach here\n"; // it does reach here
 }

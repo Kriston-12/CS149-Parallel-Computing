@@ -140,23 +140,28 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
                 while (!waitingQueue.empty()) {
                     const auto& nextTask = waitingQueue.top();
                     if (nextTask.dependTaskID > finishedTaskID) break; // haven't finished its dependency
-                    std::cout << "before adding tasks\n";
+                    // std::cout << "before adding tasks\n";
                     readyQueue.emplace(nextTask.id, nextTask.runnable, nextTask.numTotalTasks);
-                    taskProcess[nextTaskID] = {0, nextTask.numTotalTasks}; // might need a taskMutex here
+                    taskAvailable.notify_one(); 
+                    // every task.id is different, so shouln't have any data race here   
+                    taskProcess[nextTask.id] = {0, nextTask.numTotalTasks}; // might need a taskMutex here //nextTaskID = nextTask.id + 1
+                    // std::cout << "Abort happened befre waitingQueue.pop()\n";
                     waitingQueue.pop();
                 }
             }
             
             if (readyQueue.empty()) {
-                std::cout << "Wait till de\n";
+                // std::cout << "Wait till de\n";
                 taskAvailable.wait(readyLock); // release the lock, and let the thread sleep if the readyQueue is empty
             }
         }
 
         if (!readyQueue.empty()) {
-            task = readyQueue.front();
+            task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
+            std::unique_lock<std::mutex> readyLock(readyQueueMutex);
             if (readyQueue.front().currentTask >= readyQueue.front().numTotalTasks) {
-                readyQueue.pop();
+                // std::cout << "Abort happened befre readyQueue.pop()\n"; this might not be the problem
+                readyQueue.pop();  // only when the current task is finished, then pop it out
             }
             else {
                 readyQueue.front().currentTask++;
@@ -165,14 +170,20 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
         }
 
         if (hasTask) {
+ 
+            // std::cout << "Abortion happened before runTask\n";
+            // std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
             task.runnable->runTask(task.currentTask, task.numTotalTasks);
 
             // Update the most recently finished taskid--finishedTaskID
             std::unique_lock<std::mutex> processLock(taskProcessMutex);
+            // std::unique_lock<std::mutex> waitingLock(waitingQueueMutex); // if no this mutex, 
+            // std::cout << "after runTask, befre taskProcess[task.id]\n";
             auto& [finished, total] = taskProcess[task.id];
             if (++finished == total) { // Task batch completed
                 taskProcess.erase(task.id);
-                finishedTaskID = std::max(finishedTaskID, task.id);
+                finishedTaskID = std::max(finishedTaskID, task.id); // always track the most recently finished taskID so that we can check dependency 
+                std::cout << "finishedTaskID is " << finishedTaskID << std::endl;
                 finishedCondition.notify_one();
             }
         }
@@ -181,7 +192,10 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
 
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
     : ITaskSystem(num_threads)
-{
+{   
+   killed.store(false);
+//    finishedTaskID = -1;
+//    nextTaskID = 0;
    threadPool.reserve(num_threads);
    for (int i = 0; i < num_threads; ++i) {
     threadPool.emplace_back(&TaskSystemParallelThreadPoolSleeping::workerThread, this);
@@ -213,7 +227,7 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
                                                     const std::vector<TaskID>& deps) {
     TaskID dependency = -1;
     if (!deps.empty()) {
-        dependency = *std::max(deps.begin(), deps.end());
+        dependency = *std::max(deps.begin(), deps.end()); // we use the greatest integer among all dependencies as the dependency
     }
 
     {

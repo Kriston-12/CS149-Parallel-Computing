@@ -65,7 +65,7 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
 // WaitingTask - Represents a task waiting for dependencies to complete
 struct WaitingTask {
     TaskID id;
-    TaskID dependTaskID;
+    TaskID dependTaskID{-1};
     IRunnable* runnable;
     int numTotalTasks;
 
@@ -82,24 +82,25 @@ struct WaitingTask {
 // ReadyTask - represents a task ready to execute
 
 struct ReadyTask {
-    TaskID id;
+    TaskID id;  // Every task has different taskID, taskId starts from 0, all the way to total number rof tasks - 1
     IRunnable* runnable;
-    std::atomic<int> currentTask;
+    int currentTask{0};
     int numTotalTasks;
 
     ReadyTask() = default;
     ReadyTask(TaskID id, IRunnable* runnable, int numTotalTasks)
-    : id(id), runnable(runnable), currentTask(0), numTotalTasks(numTotalTasks) {}
+    : id(id), runnable(runnable), numTotalTasks(numTotalTasks) {}
 
-    ReadyTask& operator=(const ReadyTask& other) {
-        if (this != &other) {
-            id = other.id;
-            runnable = other.runnable;
-            numTotalTasks = other.numTotalTasks;
-            currentTask.store(other.currentTask.load());
-        }
-        return *this;
-    }
+    // ReadyTask& operator=(const ReadyTask& other) {
+    //     // std::cout << "copy operator is called\n";
+    //     if (this != &other) {
+    //         id = other.id;
+    //         runnable = other.runnable;
+    //         numTotalTasks = other.numTotalTasks;
+    //         currentTask = other.currentTask;
+    //     }
+    //     return *this;
+    // }
 };
 
 /*

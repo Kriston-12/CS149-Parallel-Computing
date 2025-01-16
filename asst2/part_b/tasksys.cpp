@@ -1,5 +1,5 @@
 #include "tasksys.h"
-
+#include <algorithm>
 
 IRunnable::~IRunnable() {}
 
@@ -143,7 +143,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             // }
             
             std::unique_lock<std::mutex> readyLock(readyQueueMutex);
-            if (readyQueue.empty() && (waitingQueue.empty() || waitingQueue.top().dependTaskID > finishedTaskID)) {
+            if (readyQueue.empty() && (waitingQueue.empty())) {
                 // std::cout << "Wait till de\n";
                 taskAvailable.wait(readyLock); // release the lock, and let the thread sleep if the readyQueue is empty
             }
@@ -241,7 +241,7 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
                                                     const std::vector<TaskID>& deps) {
     TaskID dependency = -1;
     if (!deps.empty()) {
-        dependency = *std::max(deps.begin(), deps.end()); // we use the greatest integer among all dependencies as the dependency
+        dependency = *std::max_element(deps.begin(), deps.end()); // max_element will return an interator, *element to get the integer value
     }
 
     {

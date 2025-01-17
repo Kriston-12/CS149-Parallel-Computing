@@ -162,7 +162,7 @@ int main(int argc, char** argv)
         printf("============================================================="
                "======================\n");
 
-        for (int i = 0; i < N_TASKSYS_IMPLS; i++) {
+        for (int i = 3; i < N_TASKSYS_IMPLS; i++) {
             double minT = 1e30;
             for (int j = 0; j < num_timing_iterations; j++) {
 

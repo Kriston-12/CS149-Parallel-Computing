@@ -740,6 +740,7 @@ TestResults recursiveFibonacciTestBase(ITaskSystem* t, bool do_async) {
         for (int i = 0; i < num_bulk_task_launches; i++) {
             t->runAsyncWithDeps(fib_tasks[i], num_tasks, deps);
         }
+        // std::cout << "finish calling the first round of tasks\n"; 
         t->sync();
     } else {
         for (int i = 0; i < num_bulk_task_launches; i++) {
@@ -764,7 +765,7 @@ TestResults recursiveFibonacciTestBase(ITaskSystem* t, bool do_async) {
     for (int i = 0; i < num_bulk_task_launches; i++) {
         delete fib_tasks[i];
     }
-
+    std::cout << "finish the testbase function\n";
     return result;
 }
 

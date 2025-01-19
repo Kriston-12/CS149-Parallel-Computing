@@ -204,34 +204,93 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
                 // std::cout << "finishedTaskID is " << finishedTaskID << std::endl;
                 finishedCondition.notify_one();
             }
-
-            // if (hasTask) {
-            // try {
-            //     // Add a final check to ensure `task` is still valid
-            //     if (task.currentTask >= task.numTotalTasks) {
-            //         std::cerr << "Task already completed or invalid. Skipping...\n";
-            //         continue;
-            //     }
-
-            //     // Execute the task
-            //     task.runnable->runTask(task.currentTask, task.numTotalTasks);
-
-            //     // Update task progress
-            //     std::unique_lock<std::mutex> processLock(taskProcessMutex);
-            //     auto& [finished, total] = taskProcess[task.id];
-            //     if (++finished == total) { // Task batch completed
-            //         taskProcess.erase(task.id);
-            //         finishedTaskID = std::max(finishedTaskID, task.id);
-            //         finishedCondition.notify_one();
-            //     }
-            //     } catch (const std::exception& e) {
-            //         std::cerr << "Exception occurred during task execution: " << e.what() << "\n";
-            //     } catch (...) {
-            //         std::cerr << "Unknown error occurred during task execution.\n";
-            //     }
-            // }
         }
     }
+}
+
+
+
+TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
+    : ITaskSystem(num_threads)
+{   
+   killed.store(false);
+//    finishedTaskID = -1;
+//    nextTaskID = 0;
+   threadPool.reserve(num_threads);
+   for (int i = 0; i < num_threads; ++i) {
+    threadPool.emplace_back(&TaskSystemParallelThreadPoolSleeping::workerThread, this);
+   }
+}
+
+TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
+
+    // std::cout << "It enteres the destructor" << std::endl;
+    killed.store(true);
+    taskAvailable.notify_all();
+
+    // {
+    //     std::unique_lock<std::mutex> lockReady(readyQueueMutex);
+    //     std::queue<ReadyTask> emptyReadyQueue;
+    //     std::swap(readyQueue, emptyReadyQueue); // 清空 readyQueue
+    // }
+    // {
+    //     std::unique_lock<std::mutex> lockWaiting(waitingQueueMutex);
+    //     std::priority_queue<WaitingTask> emptyWaitingQueue;
+    //     std::swap(waitingQueue, emptyWaitingQueue); // 清空 waitingQueue
+    // }
+
+    for (auto& thread : threadPool) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+}
+
+void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
+    // for (int i = 0; i < num_total_tasks; i++) {
+    //     runnable->runTask(i, num_total_tasks);
+    // }
+    std::vector<TaskID> noDeps;
+    runAsyncWithDeps(runnable, num_total_tasks, noDeps);
+    sync();  // much cleaner
+    // std::cout << "run function finished\n";
+}
+
+TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
+                                                    const std::vector<TaskID>& deps) {
+    TaskID dependency = -1;
+    if (!deps.empty()) {
+        dependency = *std::max_element(deps.begin(), deps.end()); // max_element will return an interator, *element to get the integer value
+        // std::cout << "dependency is " << dependency << std::endl; // this is not printed, which means segfault happened before this
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(waitingQueueMutex);
+        std::cout << "nextTaskID is " << nextTaskID << std::endl;
+        waitingQueue.emplace(nextTaskID, dependency, runnable, num_total_tasks);
+    }                                                    
+
+    taskAvailable.notify_all();
+
+    // {
+    //     std::unique_lock<std::mutex> readyLock(readyQueueMutex);
+    //     taskAvailable.notify_all();
+    // }
+    
+    return nextTaskID++;
+
+}
+
+void TaskSystemParallelThreadPoolSleeping::sync() {
+
+    //
+    // TODO: CS149 students will modify the implementation of this method in Part B.
+    //
+
+    std::unique_lock<std::mutex> lock(taskProcessMutex);
+    finishedCondition.wait(lock, [this]() {return finishedTaskID + 1 == nextTaskID;});
+
+    std::cout << "thread does not reach here\n"; // it does reach here
 }
 
 
@@ -307,86 +366,85 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
 //     }
 // }
 
+// TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
+//     : ITaskSystem(num_threads)
+// {   
+//     try {
+//         killed.store(false);
+//         threadPool.reserve(num_threads);
+//         for (int i = 0; i < num_threads; ++i) {
+//             threadPool.emplace_back(&TaskSystemParallelThreadPoolSleeping::workerThread, this);
+//         }
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error during initialization of TaskSystemParallelThreadPoolSleeping: " << e.what() << "\n";
+//         throw; // Rethrow if initialization fails
+//     } catch (...) {
+//         std::cerr << "Unknown error during initialization of TaskSystemParallelThreadPoolSleeping.\n";
+//         throw;
+//     }
+// }
 
-TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
-    : ITaskSystem(num_threads)
-{   
-   killed.store(false);
-//    finishedTaskID = -1;
-//    nextTaskID = 0;
-   threadPool.reserve(num_threads);
-   for (int i = 0; i < num_threads; ++i) {
-    threadPool.emplace_back(&TaskSystemParallelThreadPoolSleeping::workerThread, this);
-   }
-}
+// TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
+//     try {
+//         killed.store(true);
+//         taskAvailable.notify_all();
 
-TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
+//         for (auto& thread : threadPool) {
+//             if (thread.joinable()) {
+//                 thread.join();
+//             }
+//         }
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error during destruction of TaskSystemParallelThreadPoolSleeping: " << e.what() << "\n";
+//     } catch (...) {
+//         std::cerr << "Unknown error during destruction of TaskSystemParallelThreadPoolSleeping.\n";
+//     }
+// }
 
-    // std::cout << "It enteres the destructor" << std::endl;
-    killed.store(true);
-    taskAvailable.notify_all();
+// void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
+//     try {
+//         std::vector<TaskID> noDeps;
+//         runAsyncWithDeps(runnable, num_total_tasks, noDeps);
+//         sync();
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error during execution of run: " << e.what() << "\n";
+//     } catch (...) {
+//         std::cerr << "Unknown error during execution of run.\n";
+//     }
+// }
 
-    // {
-    //     std::unique_lock<std::mutex> lockReady(readyQueueMutex);
-    //     std::queue<ReadyTask> emptyReadyQueue;
-    //     std::swap(readyQueue, emptyReadyQueue); // 清空 readyQueue
-    // }
-    // {
-    //     std::unique_lock<std::mutex> lockWaiting(waitingQueueMutex);
-    //     std::priority_queue<WaitingTask> emptyWaitingQueue;
-    //     std::swap(waitingQueue, emptyWaitingQueue); // 清空 waitingQueue
-    // }
+// TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
+//                                                               const std::vector<TaskID>& deps) {
+//     try {
+//         TaskID dependency = -1;
+//         if (!deps.empty()) {
+//             dependency = *std::max_element(deps.begin(), deps.end());
+//         }
 
-    for (auto& thread : threadPool) {
-        if (thread.joinable()) {
-            thread.join();
-        }
-    }
-}
+//         {
+//             std::unique_lock<std::mutex> lock(waitingQueueMutex);
+//             waitingQueue.emplace(nextTaskID, dependency, runnable, num_total_tasks);
+//         }
 
-void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
-    // for (int i = 0; i < num_total_tasks; i++) {
-    //     runnable->runTask(i, num_total_tasks);
-    // }
-    std::vector<TaskID> noDeps;
-    runAsyncWithDeps(runnable, num_total_tasks, noDeps);
-    sync();  // much cleaner
-    // std::cout << "run function finished\n";
-}
+//         taskAvailable.notify_all();
 
-TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
-                                                    const std::vector<TaskID>& deps) {
-    TaskID dependency = -1;
-    if (!deps.empty()) {
-        dependency = *std::max_element(deps.begin(), deps.end()); // max_element will return an interator, *element to get the integer value
-        // std::cout << "dependency is " << dependency << std::endl; // this is not printed, which means segfault happened before this
-    }
+//         return nextTaskID++;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error during execution of runAsyncWithDeps: " << e.what() << "\n";
+//         throw; // Rethrow the exception if the task cannot be scheduled
+//     } catch (...) {
+//         std::cerr << "Unknown error during execution of runAsyncWithDeps.\n";
+//         throw;
+//     }
+// }
 
-    {
-        std::unique_lock<std::mutex> lock(waitingQueueMutex);
-        // std::cout << "nextTaskID is " << nextTaskID << std::endl;
-        waitingQueue.emplace(nextTaskID, dependency, runnable, num_total_tasks);
-    }                                                    
-
-    taskAvailable.notify_all();
-
-    // {
-    //     std::unique_lock<std::mutex> readyLock(readyQueueMutex);
-    //     taskAvailable.notify_all();
-    // }
-    
-    return nextTaskID++;
-
-}
-
-void TaskSystemParallelThreadPoolSleeping::sync() {
-
-    //
-    // TODO: CS149 students will modify the implementation of this method in Part B.
-    //
-
-    std::unique_lock<std::mutex> lock(taskProcessMutex);
-    finishedCondition.wait(lock, [this]() {return finishedTaskID + 1 == nextTaskID;});
-
-    std::cout << "thread does not reach here\n"; // it does reach here
-}
+// void TaskSystemParallelThreadPoolSleeping::sync() {
+//     try {
+//         std::unique_lock<std::mutex> lock(taskProcessMutex);
+//         finishedCondition.wait(lock, [this]() { return finishedTaskID + 1 == nextTaskID; });
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error during execution of sync: " << e.what() << "\n";
+//     } catch (...) {
+//         std::cerr << "Unknown error during execution of sync.\n";
+//     }
+// }

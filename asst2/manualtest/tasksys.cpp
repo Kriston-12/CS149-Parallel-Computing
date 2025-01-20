@@ -130,7 +130,8 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
  */
 void TaskSystemParallelThreadPoolSleeping::workerThread() {
     while (!killed) {
-        ReadyTask task;
+        // ReadyTask task;
+        ReadyTask* task = nullptr;
         bool hasTask = false;
         // bool wait = false;
 
@@ -167,8 +168,8 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             }
             else {
                 // std::cout << "now readyqueue is not empty, task.currentTask is " << task.currentTask << "; totaltasks is " << task.numTotalTasks << std::endl;
-                task = readyQueue.front(); // this should be a reference pass, should not have double free error，segfault
-                if (task.currentTask >= task.numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
+                task = &(readyQueue.front()); // this should be a reference pass, should not have double free error，segfault
+                if (task->currentTask >= task->numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
                     // std::cout << "now readyqueue is not empty, task.currentTask is " << task.currentTask << "; totaltasks is " << task.numTotalTasks << std::endl; // this is never printed, which means curretTask is not added 
                     // if (readyQueue.empty()) {std::cout << "shouldn't be empty";}
                     readyQueue.pop();  // 这里如果有些thread还在执行这个task的时候把它pop掉了可能有问题
@@ -176,7 +177,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
                 else {
                     // task.currentTask++; // this was wrong, task is a copy of readyQueue.front(), so task.currentTask++ would not affect the real task in readyQueue.
                     // if (readyQueue.empty()) {std::cout << "shouldn't be empty";}
-                    readyQueue.front().currentTask++;
+                    task->currentTask++;
                     // std::cout << "currentTask is " << task.currentTask << "; numtotalTasks is " << task.numTotalTasks << std::endl;
                     // std::cout << "task change might not affect readyQueue.front().task; " << "readyQueue.front.task.currentTask is " << readyQueue.front().currentTask << std::endl;
                     hasTask = true;
@@ -187,21 +188,25 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
         }
 
         if (hasTask) {
+            // if (killed) {
+            //     break;
+            // }
  
             // std::cout << "Abortion happened before runTask\n";
             // std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
+            // std::unique_lock<std::mutex> lock(readyQueueMutex);
+            task->runnable->runTask(task->currentTask, task->numTotalTasks);
             
-            task.runnable->runTask(task.currentTask, task.numTotalTasks);
 
             // Update the most recently finished taskid--finishedTaskID
             std::unique_lock<std::mutex> processLock(taskProcessMutex);
             // std::unique_lock<std::mutex> waitingLock(waitingQueueMutex); // if no this mutex, 
             // std::cout << "after runTask, befre taskProcess[task.id]\n";
-            auto& [finished, total] = taskProcess[task.id];
+            auto& [finished, total] = taskProcess[task->id];
             if (++finished == total) { // Task batch completed
-                taskProcess.erase(task.id);
-                finishedTaskID = std::max(finishedTaskID, task.id); // always track the most recently finished taskID so that we can check dependency 
-                std::cout << "task.id is " << task.id << "finishedTaskID is " << finishedTaskID << std::endl;
+                taskProcess.erase(task->id);
+                finishedTaskID = std::max(finishedTaskID, task->id); // always track the most recently finished taskID so that we can check dependency 
+                std::cout << "task.id is " << task->id << "finishedTaskID is " << finishedTaskID << std::endl;
                 finishedCondition.notify_one();
             }
         }

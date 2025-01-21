@@ -193,9 +193,9 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             // }
  
             // std::cout << "Abortion happened before runTask\n";
-            // std::cout << "Task.id is " << task.id << "; current task is" << task.currentTask << std::endl;
+            // std::cout << "Task.id is " << task->id << "; current task is" << task->currentTask << std::endl;
             // std::unique_lock<std::mutex> lock(readyQueueMutex);
-            task->runnable->runTask(task->currentTask, task->numTotalTasks);
+            task->runnable->runTask(task->currentTask - 1, task->numTotalTasks);
             
 
             // Update the most recently finished taskid--finishedTaskID

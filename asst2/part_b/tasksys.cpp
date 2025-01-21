@@ -161,6 +161,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
                     std::unique_lock<std::mutex> processLock(taskProcessMutex);
                     taskProcess[nextTask.id] = {0, nextTask.numTotalTasks}; // might need a taskMutex here //nextTaskID = nextTask.id + 1
                     taskAvailable.notify_one(); 
+                    // readyQueue.ba
                     // std::cout << "Abort happened befre waitingQueue.pop()\n";
                     
                 }

@@ -75,7 +75,10 @@ struct WaitingTask {
     // Prioritize tasks with smaller depdendent Task ID 
     //-- used for priority queue to pop up (if returns True, the queue will priorize the second parameter(other)), otherwise the first
     bool operator<(const WaitingTask& other) const {
-        return dependTaskID > other.dependTaskID;
+        if (dependTaskID == other.dependTaskID) {
+            return id > other.id; // if id is the same, which means non dependency
+        }
+        return dependTaskID > other.dependTaskID; // otherwise compare dependency
     }
 };
 

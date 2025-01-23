@@ -49,7 +49,6 @@ When you run into deadlocks, there are usually 2 cases:
 
 Test speed comparison of part_a
 
-Test speed comparision of part_a
 ```
 kris@aa:~/cs149/CS149-Parallel-Computing/asst2/part_a$ python3 ../tests/run_test_harness.py 
 runtasks_ref
@@ -165,3 +164,46 @@ Overall performance results
 [Parallel + Thread Pool + Spin]         : All passed Perf
 [Parallel + Thread Pool + Sleep]        : All passed Perf
 ```
+
+## **Assignment 3 - A Simple CUDA Renderer**
+
+Follow the steps below to set up the environment and install the required tools for **Assignment 1**.
+### **You should run `nvidia-smi` to see if your graphic card could be recognized**
+```bash
+Wed Jan 22 19:29:19 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 545.35                 Driver Version: 546.30       CUDA Version: 12.3     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce RTX 3060 ...    On  | 00000000:01:00.0  On |                  N/A |
+| N/A   40C    P8              16W /  40W |   1156MiB /  6144MiB |      5%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A        35      G   /Xwayland                                 N/A      |
++---------------------------------------------------------------------------------------+
+```
+
+### **You will only need to install cuda/nvcc compiler**
+Run the following commands:
+```bash
+sudo apt install nvidia-cuda-toolkit
+```
+
+```bash
+kris@aa:~/cs149/CS149-Parallel-Computing/asst3$ nvcc -V
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2021 NVIDIA Corporation
+Built on Thu_Nov_18_09:45:30_PST_2021
+Cuda compilation tools, release 11.5, V11.5.119
+Build cuda_11.5.r11.5/compiler.30672275_0
+```
+

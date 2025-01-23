@@ -158,7 +158,9 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             else {
                 task = &(readyQueue.front()); // this should be a reference pass, should not have double free error，segfault
                 if (task->currentTask >= task->numTotalTasks) { // this was readyQueue.front().currentTask >= readyQueue.front().numTotalTasks
-                    readyQueue.pop();  // 这里如果有些thread还在执行这个task的时候把它pop掉了可能有问题
+                    std::cout << "readyQueue.front.ID: " << readyQueue.front().id << std::endl;
+                    readyQueue.pop();  
+                    
                 }
                 else {
                     task->currentTask++;
@@ -177,6 +179,7 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
             auto& [finished, total] = taskProcess[task->id];
             if (++finished == total) { // Task batch completed
                 taskProcess.erase(task->id);
+                std::cout << "finished Task.id is " << task->id << std::endl;
                 finishedTaskID = std::max(finishedTaskID, task->id); // always track the most recently finished taskID so that we can check dependency 
                 finishedCondition.notify_one();
             }
@@ -200,7 +203,7 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
 
-    // std::cout << "It enteres the destructor" << std::endl;
+    std::cout << "It enteres the destructor" << std::endl;
     killed.store(true);
     taskAvailable.notify_all();
 
@@ -232,7 +235,7 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
 
     {
         std::unique_lock<std::mutex> lock(waitingQueueMutex);
-        // std::cout << "nextTaskID is " << nextTaskID << std::endl;
+        std::cout << "nextTaskID is " << nextTaskID << std::endl;
         waitingQueue.emplace(nextTaskID, dependency, runnable, num_total_tasks);
     }                                                    
 

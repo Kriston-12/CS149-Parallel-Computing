@@ -89,15 +89,19 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
     cudaMemcpy(device_x, xarray, N * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(device_y, yarray, N * sizeof(float), cudaMemcpyHostToDevice);
     cudaMalloc(&device_result, sizeof(float) * N);  // allocate result to store the result of kernel function
-   
+    
+
+    double computationStartTime = CycleTimer::currentSeconds();
     // run CUDA kernel. (notice the <<< >>> brackets indicating a CUDA
     // kernel launch) Execution on the GPU occurs here.
     saxpy_kernel<<<blocks, threadsPerBlock>>>(N, alpha, device_x, device_y, device_result);
-
+    cudaDeviceSynchronize(); // we need to let the host wait until the kernel function call finishes to measure the time
+    double computationEndTime = CycleTimer::currentSeconds();
     //
     // CS149 TODO: copy result from GPU back to CPU using cudaMemcpy
     //
     cudaMemcpy(resultarray, device_result, sizeof(float) * N, cudaMemcpyDeviceToHost);
+
     
     // end timing after result has been copied back into host memory
     double endTime = CycleTimer::currentSeconds();
@@ -108,15 +112,19 @@ void saxpyCuda(int N, float alpha, float* xarray, float* yarray, float* resultar
 		errCode, cudaGetErrorString(errCode));
     }
 
+    double deviceComputationTransferTime = computationEndTime - computationStartTime;
     double overallDuration = endTime - startTime;
-    printf("Effective BW by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * overallDuration, GBPerSec(totalBytes, overallDuration));
+    printf("Effective BW + computation by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * deviceComputationTransferTime, GBPerSec(totalBytes, deviceComputationTransferTime));
+    printf("Data transfer Host-device-Host time by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * (overallDuration - deviceComputationTransferTime), GBPerSec(totalBytes, overallDuration - deviceComputationTransferTime));
+    printf("Total duration by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * overallDuration, GBPerSec(totalBytes, overallDuration));
+    // printf("Effective computation by CUDA saxpy: %.3f ms\t\t[%.3f GB/s]\n", 1000.f * overallDuration, GBPerSec(totalBytes, overallDuration));
 
     //
     // CS149 TODO: free memory buffers on the GPU using cudaFree
     //
     cudaFree(device_x);
     cudaFree(device_y);
-    
+    cudaFree(device_result); //Remember to free everything
 }
 
 void printCudaInfo() {

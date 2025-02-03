@@ -27,12 +27,30 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+// Called by CPU/host and executed on GPU/device
+__global__ void scan_upsweep(int N, int two_d, int two_dplus1, int* result) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < N) {
+        // Index * twodplus1 determines which line of the algorithm architecture are we executing 
+        result[(index + 1) * two_dplus1 - 1] += result[index * two_dplus1 + two_d - 1];
+    }
+}
+
+__global__ void scan_downsweep(int N, int two_d, int two_dplus1, int* result) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < N) {
+        int temp = result[index * two_dplus1 + two_d - 1];
+        result[index * two_dplus1 + two_d - 1] = result[(index + 1) * two_dplus1 - 1];
+        result[(index + 1) * two_dplus1 - 1] += temp;
+    }    
+}
+
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
 // with results placed in global memory `result`.
 //
-// N is the logical size of the input and output arrays, however
+// N is the logical size of the input and output arrays, however 
 // students can assume that both the start and result arrays we
 // allocated with next power-of-two sizes as described by the comments
 // in cudaScan().  This is helpful, since your parallel scan
@@ -42,8 +60,8 @@ static inline int nextPow2(int n) {
 // Also, as per the comments in cudaScan(), you can implement an
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
-void exclusive_scan(int* input, int N, int* result)
-{
+void exclusive_scan(int* input, int N, int* result) // N is the logical size of input and output, 
+{ 
 
     // CS149 TODO:
     //

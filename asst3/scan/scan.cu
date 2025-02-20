@@ -14,10 +14,41 @@
 
 #define THREADS_PER_BLOCK 256
 
+// We need to implement the cuda version of the code below 
+// void exclusive_scan_iterative(int* start, int* end, int* output) {
+
+//     int N = end - start;
+//     memmove(output, start, N*sizeof(int));
+    
+//     // upsweep phase
+//     // two_dplus1 means the index we are handling, two_d means the last index
+//     // so output[i + two_dplus1 - 1] += output[i + two_d - 1] means we are adding element at last index to the current element
+//     for (int two_d = 1; two_d <= N/2; two_d*=2) {
+//         int two_dplus1 = 2*two_d;
+//         parallel_for (int i = 0; i < N; i += two_dplus1) {
+//             output[i+two_dplus1-1] += output[i+two_d-1];
+//         }
+//     }
+
+//     output[N-1] = 0;
+
+//     // downsweep phase
+//     for (int two_d = N/2; two_d >= 1; two_d /= 2) {
+//         int two_dplus1 = 2*two_d;
+//         parallel_for (int i = 0; i < N; i += two_dplus1) {
+//             int t = output[i+two_d-1];
+//             output[i+two_d-1] = output[i+two_dplus1-1];
+//             output[i+two_dplus1-1] += t;
+//         }
+//     }
+// }
 
 // helper function to round an integer up to the next power of 2
+// For example, if we have n = 19, it rounds it up to 32. 
+// 25 -> 32
+// 3 -> 4
 static inline int nextPow2(int n) {
-    n--;
+    n--; 
     n |= n >> 1;
     n |= n >> 2;
     n |= n >> 4;
@@ -71,8 +102,33 @@ void exclusive_scan(int* input, int N, int* result) // N is the logical size of 
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
+    int range = nextPow2(N);
 
+    for (int two_d = 1; two_d <= range / 2; two_d *= 2) {
+        int two_dplus1 = 2 * two_d;
 
+        // If we have remainder, we need to do an extra round, which we use "+1" below to represent it
+        int upSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
+
+        // This is a similar handle to upSweepTasksLen
+        int blocksNum = upSweepTasksLen % THREADS_PER_BLOCK ? upSweepTasksLen / THREADS_PER_BLOCK + 1 : upSweepTasksLen / THREADS_PER_BLOCK;
+
+        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_d, two_dplus1, result);
+        cudaDeviceSynchronize(); // Must synchronize to ensure previous line is completly handled
+    }
+
+    result[range - 1] = 0;  // result is allocated with space of a size of a multiple of 2. Safe here
+    // cudaDeviceSynchronize(); // Uncessary, since we handled them the for loop
+
+    for (int two_d = range / 2; two_d >= 1; two_d /= 2) {
+        int two_dplus1 = 2 * two_d;
+        
+        // These are the same as in upsweep
+        int downSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
+        int blocksNum = downSweepTasksLen % THREADS_PER_BLOCK ? downSweepTasksLen / THREADS_PER_BLOCK + 1 : downSweepTasksLen / THREADS_PER_BLOCK;
+
+        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_d, two_dplus1, result);
+    }
 }
 
 

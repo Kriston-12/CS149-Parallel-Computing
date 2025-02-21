@@ -58,21 +58,31 @@ static inline int nextPow2(int n) {
     return n;
 }
 
-// Called by CPU/host and executed on GPU/device
-__global__ void scan_upsweep(int N, int two_d, int two_dplus1, int* result) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index < N) {
+// Called by CPU/host and executed on GPU/device, two_dplus1 is our jump here
+__global__ void scan_upsweep(int N, int two_dplus1, int* result) {
+    // threadId is consecutive, but we are using (threadId) * two_dplus1 to handle jump index for the algorithm. 
+    // if len(result) = 32, two_d = 1, two_dplus1 = 2, threads per block = 8. Then our task length would be 32/two_dplus = 16
+    // blockNum = task length / threads per block = 2
+    // threadId will have a value of 0,1,2,3,4,5,6,7... 15, this operation is in parallel
+    // result[jumpIndex] += result[jumpIndex - (two_dplus1 >> 1)] -- two_dplus1 >> 1 = two_d
+    // would be result[1] += result[0], result[3] += result[2], result[5] += result[4].. result[31] += result[30].
+    // The addition above is in parallel, and this is why we use cuda.  
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    if (threadId < N) {
+        int jumpIndex = (threadId + 1) * two_dplus1 - 1;
         // Index * twodplus1 determines which line of the algorithm architecture are we executing 
-        result[(index + 1) * two_dplus1 - 1] += result[index * two_dplus1 + two_d - 1];
+        result[jumpIndex] += result[jumpIndex - (two_dplus1 >> 1)];
     }
 }
 
 __global__ void scan_downsweep(int N, int two_d, int two_dplus1, int* result) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index < N) {
-        int temp = result[index * two_dplus1 + two_d - 1];
-        result[index * two_dplus1 + two_d - 1] = result[(index + 1) * two_dplus1 - 1];
-        result[(index + 1) * two_dplus1 - 1] += temp;
+    // If you understand the example in the upsweep, the code below should be clear. 
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    if (threadId < N) {
+        int jumpIndex = (threadId + 1) * two_dplus1 - 1;
+        int temp = result[jumpIndex - (two_dplus1 >> 1)];
+        result[jumpIndex - (two_dplus1 >> 1)] = result[jumpIndex];
+        result[jumpIndex] += temp;
     }    
 }
 
@@ -108,12 +118,14 @@ void exclusive_scan(int* input, int N, int* result) // N is the logical size of 
         int two_dplus1 = 2 * two_d;
 
         // If we have remainder, we need to do an extra round, which we use "+1" below to represent it
-        int upSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
+        int upSweepTasksLen = (range + two_dplus1 - 1 / two_dplus1);
+        // int upSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
 
         // This is a similar handle to upSweepTasksLen
-        int blocksNum = upSweepTasksLen % THREADS_PER_BLOCK ? upSweepTasksLen / THREADS_PER_BLOCK + 1 : upSweepTasksLen / THREADS_PER_BLOCK;
+        int blocksNum = (upSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        // int blocksNum = upSweepTasksLen % THREADS_PER_BLOCK ? upSweepTasksLen / THREADS_PER_BLOCK + 1 : upSweepTasksLen / THREADS_PER_BLOCK;
 
-        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_d, two_dplus1, result);
+        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_dplus1, result);
         cudaDeviceSynchronize(); // Must synchronize to ensure previous line is completly handled
     }
 
@@ -124,10 +136,11 @@ void exclusive_scan(int* input, int N, int* result) // N is the logical size of 
         int two_dplus1 = 2 * two_d;
         
         // These are the same as in upsweep
-        int downSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
-        int blocksNum = downSweepTasksLen % THREADS_PER_BLOCK ? downSweepTasksLen / THREADS_PER_BLOCK + 1 : downSweepTasksLen / THREADS_PER_BLOCK;
+        int downSweepTasksLen = (range + two_dplus1 - 1 / two_dplus1);
+        int blocksNum = (downSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_d, two_dplus1, result);
+        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_dplus1, result);
+        cudaDeviceSynchronize();
     }
 }
 
@@ -234,6 +247,10 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
+
+    const int range = nextPow2(length);
+    int blockNum = (range + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
 
     return 0; 
 }

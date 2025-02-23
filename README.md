@@ -197,20 +197,21 @@ Run the following commands:
 ```bash
 sudo apt install nvidia-cuda-toolkit
 ```
+PS: I ran into errors using cuda version < 11.5. I recommend using a version >= 11.6
 
 ```bash
-kris@aa:~/cs149/CS149-Parallel-Computing/asst3$ nvcc -V
+~/cs149/CS149-Parallel-Computing/asst3/scan$ nvcc -V
 nvcc: NVIDIA (R) Cuda compiler driver
-Copyright (c) 2005-2021 NVIDIA Corporation
-Built on Thu_Nov_18_09:45:30_PST_2021
-Cuda compilation tools, release 11.5, V11.5.119
-Build cuda_11.5.r11.5/compiler.30672275_0
+Copyright (c) 2005-2023 NVIDIA Corporation
+Built on Wed_Nov_22_10:17:15_PST_2023
+Cuda compilation tools, release 12.3, V12.3.107
+Build cuda_12.3.r12.3/compiler.33567101_0
 ```
 
 In this lab, we will implement cuda scan (prefix sum), see the image below for algorithm detail
 ![image](https://github.com/user-attachments/assets/6e75874d-b5f0-4217-b1cf-e80e60b79f1f)
 Below is the C++ implementation 
-```
+```cpp
 void exclusive_scan_iterative(int* start, int* end, int* output) {
 
     int N = end - start;
@@ -237,5 +238,134 @@ void exclusive_scan_iterative(int* start, int* end, int* output) {
     }
 }
 ```
+Below is my CUDA implementation with explanantion in comments
+```CUDA
+// Called by CPU/host and executed on GPU/device, two_dplus1 is our jump here
+__global__ void scan_upsweep(int N, int two_dplus1, int* result) {
+    // threadId is consecutive, but we are using (threadId) * two_dplus1 to handle jump index for the algorithm. 
+    // if len(result) = 32, two_d = 1, two_dplus1 = 2, threads per block = 8. Then our task length would be 32/two_dplus = 16
+    // blockNum = task length / threads per block = 2
+    // threadId will have a value of 0,1,2,3,4,5,6,7... 15, this operation is in parallel
+    // result[jumpIndex] += result[jumpIndex - (two_dplus1 >> 1)] -- two_dplus1 >> 1 = two_d
+    // would be result[1] += result[0], result[3] += result[2], result[5] += result[4].. result[31] += result[30].
+    // The addition above is in parallel, and this is why we use cuda.  
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    if (threadId < N) {
+        int jumpIndex = (threadId + 1) * two_dplus1 - 1;
+        // Index * twodplus1 determines which line of the algorithm architecture are we executing 
+        result[jumpIndex] += result[jumpIndex - (two_dplus1 >> 1)];
+    }
+}
+
+__global__ void scan_downsweep(int N, int two_dplus1, int* result) {
+    // If you understand the example in the upsweep, the code below should be clear. 
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    if (threadId < N) {
+        int jumpIndex = (threadId + 1) * two_dplus1 - 1;
+        int temp = result[jumpIndex - (two_dplus1 >> 1)];
+        result[jumpIndex - (two_dplus1 >> 1)] = result[jumpIndex];
+        result[jumpIndex] += temp;
+    }    
+}
+
+void exclusive_scan(int* input, int N, int* result) // N is the logical size of input and output, 
+{ 
+
+    // CS149 TODO:
+    //
+    // Implement your exclusive scan implementation here.  Keep in
+    // mind that although the arguments to this function are device
+    // allocated arrays, this is a function that is running in a thread
+    // on the CPU.  Your implementation will need to make multiple calls
+    // to CUDA kernel functions (that you must write) to implement the
+    // scan.
+    int range = nextPow2(N);
+
+    for (int two_dplus1 = 2; two_dplus1 <= range / 2; two_dplus1 *= 2) {
+
+        // If we have remainder, we need to do an extra round, which we use "+1" below to represent it
+        int upSweepTasksLen = (range + two_dplus1 - 1) / two_dplus1;
+        // int upSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
+
+        // This is a similar handle to upSweepTasksLen
+        int blocksNum = (upSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        // int blocksNum = upSweepTasksLen % THREADS_PER_BLOCK ? upSweepTasksLen / THREADS_PER_BLOCK + 1 : upSweepTasksLen / THREADS_PER_BLOCK;
+
+        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(upSweepTasksLen, two_dplus1, result);
+        cudaDeviceSynchronize(); // Must synchronize to ensure previous line is completly handled
+    }
+
+    // result[range - 1] = 0;  // This is invalid for device memory
+    cudaMemset(&result[range - 1], 0, sizeof(int));
+    // cudaMemset(result + (range - 1), 0, sizeof(int));
+    cudaDeviceSynchronize(); 
+
+    for (int two_dplus1 = range; two_dplus1 >= 2; two_dplus1 /= 2) {
+        
+        // These are the same as in upsweep
+        int downSweepTasksLen = (range + two_dplus1 - 1) / two_dplus1;
+        int blocksNum = (downSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(downSweepTasksLen, two_dplus1, result);
+        cudaDeviceSynchronize();
+    }
+}
+```
+Below is test output
+```bash
+~/cs149/CS149-Parallel-Computing/asst3/scan$ ./cudaScan -n 2000000
+---------------------------------------------------------
+Found 1 CUDA devices
+Device 0: NVIDIA GeForce RTX 3060 Laptop GPU
+   SMs:        30
+   Global mem: 6144 MB
+   CUDA Cap:   8.6
+---------------------------------------------------------
+Array size: 2000000
+Student GPU time: 2.240 ms
+Scan outputs are correct!
+
+~/cs149/CS149-Parallel-Computing/asst3/scan$ ./checker.py scan   
+Test: scan
+
+--------------
+Running tests:
+--------------
+
+Element Count: 1000000
+Correctness passed!
+Student Time: 1.988
+Ref Time: 1.84
+
+Element Count: 10000000
+Correctness passed!
+Student Time: 7.869
+Ref Time: 9.648
+
+Element Count: 20000000
+Correctness passed!
+Student Time: 12.439
+Ref Time: 16.689
+
+Element Count: 40000000
+Correctness passed!
+Student Time: 23.041
+Ref Time: 33.832
+
+-------------------------
+Scan Score Table:
+-------------------------
+-------------------------------------------------------------------------
+| Element Count   | Ref Time        | Student Time    | Score           |
+-------------------------------------------------------------------------
+| 1000000         | 1.84            | 1.988           | 1.25            |
+| 10000000        | 9.648           | 7.869           | 1.25            |
+| 20000000        | 16.689          | 12.439          | 1.25            |
+| 40000000        | 33.832          | 23.041          | 1.25            |
+-------------------------------------------------------------------------
+|                                   | Total score:    | 5.0/5.0         |
+-------------------------------------------------------------------------
+```
+
 
 

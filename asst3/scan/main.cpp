@@ -175,6 +175,8 @@ int main(int argc, char** argv) {
                         i, resultarray[i], checkarray[i]);
                 exit(1);
             }
+            // if (i < 10)
+            //     printf(" A[%d] = %d, expecting %d.\n", i, resultarray[i], checkarray[i]);
         }
         printf("Scan outputs are correct!\n");
 	

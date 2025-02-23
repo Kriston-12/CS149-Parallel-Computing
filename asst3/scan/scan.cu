@@ -75,7 +75,7 @@ __global__ void scan_upsweep(int N, int two_dplus1, int* result) {
     }
 }
 
-__global__ void scan_downsweep(int N, int two_d, int two_dplus1, int* result) {
+__global__ void scan_downsweep(int N, int two_dplus1, int* result) {
     // If you understand the example in the upsweep, the code below should be clear. 
     int threadId = blockIdx.x * blockDim.x + threadIdx.x;
     if (threadId < N) {
@@ -114,32 +114,32 @@ void exclusive_scan(int* input, int N, int* result) // N is the logical size of 
     // scan.
     int range = nextPow2(N);
 
-    for (int two_d = 1; two_d <= range / 2; two_d *= 2) {
-        int two_dplus1 = 2 * two_d;
+    for (int two_dplus1 = 2; two_dplus1 <= range / 2; two_dplus1 *= 2) {
 
         // If we have remainder, we need to do an extra round, which we use "+1" below to represent it
-        int upSweepTasksLen = (range + two_dplus1 - 1 / two_dplus1);
+        int upSweepTasksLen = (range + two_dplus1 - 1) / two_dplus1;
         // int upSweepTasksLen = range % two_dplus1 ? range / two_dplus1 + 1 : range / two_dplus1;
 
         // This is a similar handle to upSweepTasksLen
         int blocksNum = (upSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
         // int blocksNum = upSweepTasksLen % THREADS_PER_BLOCK ? upSweepTasksLen / THREADS_PER_BLOCK + 1 : upSweepTasksLen / THREADS_PER_BLOCK;
 
-        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_dplus1, result);
+        scan_upsweep<<<blocksNum, THREADS_PER_BLOCK>>>(upSweepTasksLen, two_dplus1, result);
         cudaDeviceSynchronize(); // Must synchronize to ensure previous line is completly handled
     }
 
-    result[range - 1] = 0;  // result is allocated with space of a size of a multiple of 2. Safe here
-    // cudaDeviceSynchronize(); // Uncessary, since we handled them the for loop
+    // result[range - 1] = 0;  // This is invalid for device memory
+    cudaMemset(&result[range - 1], 0, sizeof(int));
+    // cudaMemset(result + (range - 1), 0, sizeof(int));
+    cudaDeviceSynchronize(); 
 
-    for (int two_d = range / 2; two_d >= 1; two_d /= 2) {
-        int two_dplus1 = 2 * two_d;
+    for (int two_dplus1 = range; two_dplus1 >= 2; two_dplus1 /= 2) {
         
         // These are the same as in upsweep
-        int downSweepTasksLen = (range + two_dplus1 - 1 / two_dplus1);
+        int downSweepTasksLen = (range + two_dplus1 - 1) / two_dplus1;
         int blocksNum = (downSweepTasksLen + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(range, two_dplus1, result);
+        scan_downsweep<<<blocksNum, THREADS_PER_BLOCK>>>(downSweepTasksLen, two_dplus1, result);
         cudaDeviceSynchronize();
     }
 }
@@ -229,6 +229,10 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 
 
 // find_repeats --
+__global__ void findRepeatsSet(int* a, int* device_input, int length) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    a[index] = (index < length - 1 && device_input[index] == device_input[index + 1]) ? 1 : 0;
+}
 //
 // Given an array of integers `device_input`, returns an array of all
 // indices `i` for which `device_input[i] == device_input[i+1]`.
@@ -248,9 +252,23 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
 
-    const int range = nextPow2(length);
+    // The goal is to find total number of device_input[i] == device_input[i+1]
+    // Strategy is to use an array to indicate if the condition is met. If it is, set a[i + 1] = 1, else 0
+    int range = nextPow2(length);
     int blockNum = (range + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
+    int *a;
+    cudaMalloc(&a, range * sizeof(bool));
+    findRepeatsSet<<<blockNum, std::min(range, THREADS_PER_BLOCK)>>>(a, device_input, length);
+    cudaDeviceSynchronize();
+
+    // The first parameter is never used.
+    exclusive_scan(a, length, a);
+
+    int result;
+    cudaMemcpy(&result, &a[length - 1], sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaFree(a);
 
     return 0; 
 }

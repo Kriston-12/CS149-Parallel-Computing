@@ -509,6 +509,26 @@ __global__ void kernelRenderCircles() {
     }
 }
 
+namespace firstAttempt {
+    // align with dim3 blockDim(256, 1);
+    // dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+    constexpr int blockSize = 16;
+    constexpr int threadsPerBlock = 256;
+    #include "exclusiveScan.cu_inl"
+
+    __inline__ __device__ bool pixelWithinCircle(float2 center, float3 pixel, float radius) {
+        float diffx = pixel.x - center.x;
+        float diffy = pixel.y - center.y;
+        return (diffx * diffx + diffy * diffy) < radius * radius;
+    }
+
+    __inline__ __device__ int clamp(int x, int low, int high) {
+        return x > low ? (x < high ? x : high) : low;
+    }
+
+    
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////
 
 

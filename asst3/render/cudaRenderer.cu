@@ -47,6 +47,7 @@ __constant__ int    cuConstNoiseXPermutationTable[256];
 __constant__ float  cuConstNoise1DValueTable[256];
 
 // color ramp table needed for the color ramp lookup shader
+// 我的理解是RGB三色但是颜色深浅有5种
 #define COLOR_MAP_SIZE 5
 __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 
@@ -56,6 +57,33 @@ __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 #include "noiseCuda.cu_inl"
 #include "lookupColor.cu_inl"
 
+
+// Below is c++ clear image function, put here for comparision
+// void
+// RefRenderer::clearImage() {
+
+//     // clear image to white unless this is the snowflake scene.  For
+//     // the snowflake clear the image to a more pleasing color ramp
+
+//     if (sceneName == SNOWFLAKES || sceneName == SNOWFLAKES_SINGLE_FRAME) {
+
+//         for (int j=0; j<image->height; j++) {
+//             float* ptr = image->data + (4 * j * image->width);
+//             float shade = .4f + .45f * static_cast<float>(image->height-j) / image->height;
+//             for (int i=0; i<image->width; i++) {
+//                 ptr[0] = ptr[1] = ptr[2] = shade;
+//                 ptr[3] = 1.f;
+//                 ptr += 4;
+//             }
+//         }
+//     } else {
+//         image->clear(1.f, 1.f, 1.f, 1.f);
+//     }
+// }
+
+// typedef struct {
+//     float x, y, z, w;
+// } float4;
 
 // kernelClearImageSnowflake -- (CUDA device code)
 //
@@ -379,6 +407,54 @@ shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
     // END SHOULD-BE-ATOMIC REGION
 }
 
+// void
+// RefRenderer::render() {
+
+//     // render all circles
+//     for (int circleIndex=0; circleIndex<numCircles; circleIndex++) {
+
+//         int index3 = 3 * circleIndex;
+//         // all variables below ranging [0, 1] as they are normalized 
+//         float px = position[index3];
+//         float py = position[index3+1];
+//         float pz = position[index3+2];
+//         float rad = radius[circleIndex];  
+
+//         // compute the bounding box of the circle.  This bounding box
+//         // is in normalized coordinates, ranging [0, 1]
+//         float minX = px - rad;  //circle最左边, 
+//         float maxX = px + rad;  //circle最右边
+//         float minY = py - rad;  //circle最下面
+//         float maxY = py + rad;
+
+//         // convert normalized coordinate bounds to integer screen
+//         // pixel bounds.  Clamp to the edges of the screen.
+//         #define CLAMP(x,minimum,maximum) std::max(minimum, std::min(x, maximum))
+           // 一个image上面有多个circles，我们确保的就是circle的边边不会超过image的范围
+           // 我们下面是把normalized bounds还原成正常的
+//         int screenMinX = CLAMP(static_cast<int>(minX * image->width), 0, image->width);
+//         int screenMaxX = CLAMP(static_cast<int>(maxX * image->width)+1, 0, image->width);
+//         int screenMinY = CLAMP(static_cast<int>(minY * image->height), 0, image->height);
+//         int screenMaxY = CLAMP(static_cast<int>(maxY * image->height)+1, 0, image->height);
+
+//         float invWidth = 1.f / image->width;
+//         float invHeight = 1.f / image->height;
+//         // receive contribution.
+//         for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
+
+//             // pointer to pixel data
+//             float* imgPtr = &image->data[4 * (pixelY * image->width + screenMinX)];
+
+//             for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
+
+//                 float pixelCenterNormX = invWidth * (static_cast<float>(pixelX) + 0.5f);
+//                 float pixelCenterNormY = invHeight * (static_cast<float>(pixelY) + 0.5f);
+//                 shadePixel(circleIndex, pixelCenterNormX, pixelCenterNormY, px, py, pz, imgPtr);
+//                 imgPtr += 4;
+//             }
+//         }
+//     }
+// }
 // kernelRenderCircles -- (CUDA device code)
 //
 // Each thread renders a circle.  Since there is no protection to
@@ -394,7 +470,11 @@ __global__ void kernelRenderCircles() {
     int index3 = 3 * index;
 
     // read position and radius
-    float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
+    // struct __device_builtin__ float3
+    // {
+    //     float x, y, z;
+    // };
+    float3 p = *(float3*)(&cuConstRendererParams.position[index3]); // p.x, p.y, p.z are allocated consecutively in float3
     float  rad = cuConstRendererParams.radius[index];
 
     // compute the bounding box of the circle. The bound is in integer
@@ -407,6 +487,7 @@ __global__ void kernelRenderCircles() {
     short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
 
     // a bunch of clamps.  Is there a CUDA built-in for this?
+    // #define CLAMP(x,minimum,maximum) std::max(minimum, std::min(x, maximum))
     short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
     short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
     short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
@@ -421,6 +502,7 @@ __global__ void kernelRenderCircles() {
         for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {
             float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
                                                  invHeight * (static_cast<float>(pixelY) + 0.5f));
+            // the calling below has no strict order, this need to be changed
             shadePixel(index, pixelCenterNorm, p, imgPtr);
             imgPtr++;
         }
@@ -598,6 +680,7 @@ CudaRenderer::clearImage() {
 
     // 256 threads per block is a healthy number
     dim3 blockDim(16, 16, 1);
+    // Here we handled an image by dividing it into smaller sections 
     dim3 gridDim(
         (image->width + blockDim.x - 1) / blockDim.x,
         (image->height + blockDim.y - 1) / blockDim.y);
@@ -639,7 +722,7 @@ CudaRenderer::render() {
     // 256 threads per block is a healthy number
     dim3 blockDim(256, 1);
     dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
-
+    
     kernelRenderCircles<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }

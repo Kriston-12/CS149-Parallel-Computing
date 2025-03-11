@@ -283,6 +283,8 @@ lookupColor(float coord, float& r, float& g, float& b) {
 // given pixel.  All values are provided in normalized space, where
 // the screen spans [0,1]^2.  The color/opacity of the circle is
 // computed at the pixel center.
+
+// We have an array of circles, the parameter circleIndex is to show which circle we are handling
 void
 RefRenderer::shadePixel(
     int circleIndex,
@@ -294,7 +296,7 @@ RefRenderer::shadePixel(
     float diffY = py - pixelCenterY;
     float pixelDist = diffX * diffX + diffY * diffY;
 
-    float rad = radius[circleIndex];
+    float rad = radius[circleIndex]; // get the radius of the circle
     float maxDist = rad * rad;
 
     // circle does not contribute to the image
@@ -372,7 +374,9 @@ RefRenderer::render() {
         float maxY = py + rad;
 
         // convert normalized coordinate bounds to integer screen
+        // minX, minY, maxX and maxY are normalized coordinates, which means they range from 0 to 1--[0, 1]
         // pixel bounds.  Clamp to the edges of the screen.
+        // #define CLAMP(x,minimum,maximum) std::max(minimum, std::min(x, maximum))
         int screenMinX = CLAMP(static_cast<int>(minX * image->width), 0, image->width);
         int screenMaxX = CLAMP(static_cast<int>(maxX * image->width)+1, 0, image->width);
         int screenMinY = CLAMP(static_cast<int>(minY * image->height), 0, image->height);
@@ -388,7 +392,12 @@ RefRenderer::render() {
         // receive contribution.
         for (int pixelY=screenMinY; pixelY<screenMaxY; pixelY++) {
 
-            // pointer to pixel data
+            // pointer to pixel data, 我们的data是一维数组，所以我们要 pixelY*image->width + screenMinX找到
+            // pixel在整张图片上的index (left to right, up to bottom)
+            // eg. image is 600 x 800. screenMinx = 1, pixelY = 2. 
+            // we have 4 * 600 x 800 elements in total in image->data, 4 means (r, g, b, opacity)
+            // (pixelY * image->width + screenMinX) = (2 * 600 + 1) = 1201, 1201st pixel in our image with 600 x 800 pixel
+            // 
             float* imgPtr = &image->data[4 * (pixelY * image->width + screenMinX)];
 
             for (int pixelX=screenMinX; pixelX<screenMaxX; pixelX++) {

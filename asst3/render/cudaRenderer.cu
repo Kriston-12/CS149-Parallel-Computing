@@ -526,6 +526,91 @@ namespace firstAttempt {
         return x > low ? (x < high ? x : high) : low;
     }
 
+    // We use short* here bc in the original flawed implementation, it uses short
+    __global__ void getCircleSize(short* minX, short* maxX, short* minY, short* maxY, int* boundBoxArray) {
+        // Below is copied and pasted from the flawed version as mentioned 
+        int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (index >= cuConstRendererParams.numCircles)
+            return;
+
+        int index3 = 3 * index;
+        float3 p = *reinterpret_cast<float3 *>(&cuConstRendererParams.position[index3]);
+        float rad = cuConstRendererParams.radius[index];
+
+        short imageWidth = cuConstRendererParams.imageWidth;
+        short imageHeight = cuConstRendererParams.imageHeight;
+
+        minX[index] = clamp(imageWidth * (p.x - rad), 0, imageWidth);
+        maxX[index] = clamp(imageWidth * (p.x + rad) + 1, 0, imageWidth);
+        minY[index] = clamp(imageHeight * (p.y - rad), 0, imageHeight);
+        maxY[index] = clamp(imageHeight * (p.y + rad) + 1, 0, imageHeight);
+
+        boundBoxArray[index] = (maxX[index] - minX[index]) * (maxY[index] - minY[index]);
+
+        // read position and radius
+        // struct __device_builtin__ float3
+        // {
+        //     float x, y, z;
+        // };
+        // float3 p = *(float3*)(&cuConstRendererParams.position[index3]); // p.x, p.y, p.z are allocated consecutively in float3
+        // float  rad = cuConstRendererParams.radius[index];
+
+        // // compute the bounding box of the circle. The bound is in integer
+        // // screen coordinates, so it's clamped to the edges of the screen.
+        // short imageWidth = cuConstRendererParams.imageWidth;
+        // short imageHeight = cuConstRendererParams.imageHeight;
+        // short minX = static_cast<short>(imageWidth * (p.x - rad));
+        // short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1;
+        // short minY = static_cast<short>(imageHeight * (p.y - rad));
+        // short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1;
+
+        // // a bunch of clamps.  Is there a CUDA built-in for this?
+        // // #define CLAMP(x,minimum,maximum) std::max(minimum, std::min(x, maximum))
+        // short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
+        // short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
+        // short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
+        // short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
+
+        // float invWidth = 1.f / imageWidth;
+        // float invHeight = 1.f / imageHeight;
+ 
+        
+    }
+
+    __global__ void getCirclePixels(int* boundBoxArray, int* pixelId, int* circleId, short minX, short maxX, short minY, short maxY, int index) {
+        int pixelX = minX + blockIdx.x * blockDim.x + threadIdx.x;
+        int pixelY = minY + blockIdx.y * blockDim.y + threadIdx.y;
+
+        if (pixelX >= maxX || pixelY >= maxY) {
+            return;
+        }
+
+        int globalIndex = (pixelY - minY) * (maxX - minX) + (pixelX - minX);
+        // this is to be done 
+
+
+    }
+
+    __global__ void render(int *pixelId, int* circleId, int totalCircleNum) {
+        int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+        // if pixelId[index] == pixelId[index - 1], which means pixelId[index - 1] is not shaded, we could not shade pixelId[index]
+        if (index >= totalCircleNum || (pixelId && pixelId[index] == pixelId[index - 1])) {
+            return;
+        }
+
+        while (true) {
+            int pixelX = pixelId[index] % cuConstRendererParams.imageWidth;
+            int pixelY = pixelId[index] / cuConstRendererParams.imageWidth;
+
+            shadePixel(circleId[index], make_float2((pixelX + 0.5) / cuConstRendererParams.imageWidth,
+                                        (pixelY + 0.5) / cuConstRendererParams.imageHeight),
+                                        *reinterpret_cast<float3 *>(&cuConstRendererParams.position[3 * circleId[index]]),
+                                        reinterpret_cast<float4 *>(&cuConstRendererParams.imageData[4 * pixelId[index]]));
+        }
+    }
+
     
 }
 

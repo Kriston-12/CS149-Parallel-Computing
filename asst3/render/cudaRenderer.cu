@@ -512,8 +512,9 @@ __global__ void kernelRenderCircles() {
 namespace firstAttempt {
     // align with dim3 blockDim(256, 1);
     // dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+
+    constexpr int THREADS_PER_BLOCK = 16;
     constexpr int blockSize = 16;
-    constexpr int threadsPerBlock = 256;
     #include "exclusiveScan.cu_inl"
 
     __inline__ __device__ bool pixelWithinCircle(float2 center, float3 pixel, float radius) {
@@ -576,6 +577,27 @@ namespace firstAttempt {
         // float invHeight = 1.f / imageHeight;
  
         
+    }
+
+    __device__ void shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* pixelData) {
+        float dx = p.x - pixelCenter.x;
+        float dy = p.y - pixelCenter.y;
+        float pixelDist = dx * dx + dy * dy;
+        float rad = cuConstRendererParams.radius[circleIndex];
+        float maxDist = rad * rad;
+
+        if (pixelDist > maxDist) return;  
+
+        float colR = cuConstRendererParams.color[3 * circleIndex];
+        float colG = cuConstRendererParams.color[3 * circleIndex + 1];
+        float colB = cuConstRendererParams.color[3 * circleIndex + 2];
+        float alpha = 0.5f; 
+
+        float oneMinusAlpha = 1.f - alpha;
+        pixelData->x = alpha * colR + oneMinusAlpha * pixelData->x;
+        pixelData->y = alpha * colG + oneMinusAlpha * pixelData->y;
+        pixelData->z = alpha * colB + oneMinusAlpha * pixelData->z;
+        pixelData->w += alpha;
     }
 
     __global__ void getCirclePixels(int* boundBoxArray, int* pixelId, int* circleId, short minX, short maxX, short minY, short maxY, int index) {

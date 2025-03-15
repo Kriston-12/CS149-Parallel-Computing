@@ -579,26 +579,52 @@ namespace firstAttempt {
         
     }
 
-    __device__ void shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* pixelData) {
-        float dx = p.x - pixelCenter.x;
-        float dy = p.y - pixelCenter.y;
-        float pixelDist = dx * dx + dy * dy;
-        float rad = cuConstRendererParams.radius[circleIndex];
-        float maxDist = rad * rad;
+__device__ void shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
+    float dx = p.x - pixelCenter.x;
+    float dy = p.y - pixelCenter.y;
+    float pixelDist = dx * dx + dy * dy;
 
-        if (pixelDist > maxDist) return;  
+    float rad = cuConstRendererParams.radius[circleIndex];
+    float maxDist = rad * rad;
 
-        float colR = cuConstRendererParams.color[3 * circleIndex];
-        float colG = cuConstRendererParams.color[3 * circleIndex + 1];
-        float colB = cuConstRendererParams.color[3 * circleIndex + 2];
-        float alpha = 0.5f; 
+    if (pixelDist > maxDist) return; 
+    float3 rgb;
+    float alpha;
 
-        float oneMinusAlpha = 1.f - alpha;
-        pixelData->x = alpha * colR + oneMinusAlpha * pixelData->x;
-        pixelData->y = alpha * colG + oneMinusAlpha * pixelData->y;
-        pixelData->z = alpha * colB + oneMinusAlpha * pixelData->z;
-        pixelData->w += alpha;
+    if (cuConstRendererParams.sceneName == SNOWFLAKES || cuConstRendererParams.sceneName == SNOWFLAKES_SINGLE_FRAME) {
+        const float kCircleMaxAlpha = .5f;
+        const float falloffScale = 4.f;
+
+        float normPixelDist = sqrt(pixelDist) / rad;
+        rgb = lookupColor(normPixelDist);
+
+        float maxAlpha = .6f + .4f * (1.f - p.z);
+        maxAlpha = kCircleMaxAlpha * fmaxf(fminf(maxAlpha, 1.f), 0.f);
+        alpha = maxAlpha * exp(-falloffScale * normPixelDist * normPixelDist);
+    } else {
+        int index3 = 3 * circleIndex;
+        rgb = *(float3*)&(cuConstRendererParams.color[index3]);
+        alpha = .5f;
     }
+
+    float oneMinusAlpha = 1.f - alpha;
+
+    float4 prevColor;
+    float4 newColor;
+    
+    do {
+        prevColor = *imagePtr; 
+        
+        newColor.x = alpha * rgb.x + oneMinusAlpha * prevColor.x;
+        newColor.y = alpha * rgb.y + oneMinusAlpha * prevColor.y;
+        newColor.z = alpha * rgb.z + oneMinusAlpha * prevColor.z;
+        newColor.w = alpha + prevColor.w;
+
+    } while (atomicCAS((unsigned int*)imagePtr, __float_as_uint(prevColor.x), __float_as_uint(newColor.x)) != __float_as_uint(prevColor.x) ||
+             atomicCAS(((unsigned int*)imagePtr) + 1, __float_as_uint(prevColor.y), __float_as_uint(newColor.y)) != __float_as_uint(prevColor.y) ||
+             atomicCAS(((unsigned int*)imagePtr) + 2, __float_as_uint(prevColor.z), __float_as_uint(newColor.z)) != __float_as_uint(prevColor.z) ||
+             atomicCAS(((unsigned int*)imagePtr) + 3, __float_as_uint(prevColor.w), __float_as_uint(newColor.w)) != __float_as_uint(prevColor.w));
+}
 
     __global__ void getCirclePixels(int* boundBoxArray, int* pixelId, int* circleId, short minX, short maxX, short minY, short maxY, int index) {
         int pixelX = minX + blockIdx.x * blockDim.x + threadIdx.x;
@@ -614,23 +640,26 @@ namespace firstAttempt {
 
     }
 
-    __global__ void render(int *pixelId, int* circleId, int totalCircleNum) {
-        int index = blockIdx.x * blockDim.x + threadIdx.x;
+    __global__ void kernelRenderPixels() {
+    int pixelX = blockIdx.x * blockDim.x + threadIdx.x;
+    int pixelY = blockIdx.y * blockDim.y + threadIdx.y;
 
-        // if pixelId[index] == pixelId[index - 1], which means pixelId[index - 1] is not shaded, we could not shade pixelId[index]
-        if (index >= totalCircleNum || (pixelId && pixelId[index] == pixelId[index - 1])) {
-            return;
+    if (pixelX >= cuConstRendererParams.imageWidth || pixelY >= cuConstRendererParams.imageHeight) 
+        return;
+
+    float2 pixelCenter = make_float2((pixelX + 0.5f) / cuConstRendererParams.imageWidth,
+                                     (pixelY + 0.5f) / cuConstRendererParams.imageHeight);
+    float4* imagePtr = reinterpret_cast<float4*>(&cuConstRendererParams.imageData[4 * (pixelY * cuConstRendererParams.imageWidth + pixelX)]);
+
+    // 遍历所有圆，按顺序计算影响
+    for (int i = 0; i < cuConstRendererParams.numCircles; i++) {
+        float3 circlePos = *reinterpret_cast<float3 *>(&cuConstRendererParams.position[3 * i]);
+        float rad = cuConstRendererParams.radius[i];
+
+        if (pixelWithinCircle(pixelCenter, circlePos, rad)) {
+            firstAttempt::shadePixel(i, pixelCenter, circlePos, imagePtr);
         }
-
-        while (true) {
-            int pixelX = pixelId[index] % cuConstRendererParams.imageWidth;
-            int pixelY = pixelId[index] / cuConstRendererParams.imageWidth;
-
-            shadePixel(circleId[index], make_float2((pixelX + 0.5) / cuConstRendererParams.imageWidth,
-                                        (pixelY + 0.5) / cuConstRendererParams.imageHeight),
-                                        *reinterpret_cast<float3 *>(&cuConstRendererParams.position[3 * circleId[index]]),
-                                        reinterpret_cast<float4 *>(&cuConstRendererParams.imageData[4 * pixelId[index]]));
-        }
+    }
     }
 
     

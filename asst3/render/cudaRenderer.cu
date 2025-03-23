@@ -537,60 +537,68 @@ namespace firstAttempt {
     }
 
 
-__device__ void shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
-    float dx = p.x - pixelCenter.x;
-    float dy = p.y - pixelCenter.y;
-    float pixelDist = dx * dx + dy * dy;
+__device__ __inline__ void
+shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
 
-    float rad = cuConstRendererParams.radius[circleIndex];
+    float diffX = p.x - pixelCenter.x;
+    float diffY = p.y - pixelCenter.y;
+    float pixelDist = diffX * diffX + diffY * diffY;
+
+    float rad = cuConstRendererParams.radius[circleIndex];;
     float maxDist = rad * rad;
 
-    if (pixelDist > maxDist) return; 
+    // circle does not contribute to the image
+    if (pixelDist > maxDist)
+        return;
+
     float3 rgb;
     float alpha;
 
+    // there is a non-zero contribution.  Now compute the shading value
+
+    // suggestion: This conditional is in the inner loop.  Although it
+    // will evaluate the same for all threads, there is overhead in
+    // setting up the lane masks etc to implement the conditional.  It
+    // would be wise to perform this logic outside of the loop next in
+    // kernelRenderCircles.  (If feeling good about yourself, you
+    // could use some specialized template magic).
     if (cuConstRendererParams.sceneName == SNOWFLAKES || cuConstRendererParams.sceneName == SNOWFLAKES_SINGLE_FRAME) {
+
         const float kCircleMaxAlpha = .5f;
         const float falloffScale = 4.f;
 
         float normPixelDist = sqrt(pixelDist) / rad;
         rgb = lookupColor(normPixelDist);
 
-        float maxAlpha = .6f + .4f * (1.f - p.z);
-        maxAlpha = kCircleMaxAlpha * fmaxf(fminf(maxAlpha, 1.f), 0.f);
-        alpha = maxAlpha * exp(-falloffScale * normPixelDist * normPixelDist);
+        float maxAlpha = .6f + .4f * (1.f-p.z);
+        maxAlpha = kCircleMaxAlpha * fmaxf(fminf(maxAlpha, 1.f), 0.f); // kCircleMaxAlpha * clamped value
+        alpha = maxAlpha * exp(-1.f * falloffScale * normPixelDist * normPixelDist);
+
     } else {
         // simple: each circle has an assigned color
         int index3 = 3 * circleIndex;
-
-        // cuConstRendererParams.color[index3] is of type float
-        // &cuConstRendererParams.color[index3] is of type float*
-        // (float3*) *float will use 3 consecutive float* and merge these 3 into one float3*
-        // *(float3*) retrieves float3
-        // we could use direct cast between pointeres but we cannot do (float3)(cuConstRendererParams.color[index3])
         rgb = *(float3*)&(cuConstRendererParams.color[index3]);
         alpha = .5f;
     }
 
     float oneMinusAlpha = 1.f - alpha;
 
-    float4 prevColor;
-    float4 newColor;
-    
-    do {
-        prevColor = *imagePtr; 
-        
-        newColor.x = alpha * rgb.x + oneMinusAlpha * prevColor.x;
-        newColor.y = alpha * rgb.y + oneMinusAlpha * prevColor.y;
-        newColor.z = alpha * rgb.z + oneMinusAlpha * prevColor.z;
-        newColor.w = alpha + prevColor.w;
+    // BEGIN SHOULD-BE-ATOMIC REGION
+    // global memory read
 
-    } // atomicCAS(int* addr, int compare, int val)
-    while (atomicCAS((unsigned int*)imagePtr, __float_as_uint(prevColor.x), __float_as_uint(newColor.x)) ||
-             atomicCAS(((unsigned int*)imagePtr) + 1, __float_as_uint(prevColor.y), __float_as_uint(newColor.y)) ||
-             atomicCAS(((unsigned int*)imagePtr) + 2, __float_as_uint(prevColor.z), __float_as_uint(newColor.z)) ||
-             atomicCAS(((unsigned int*)imagePtr) + 3, __float_as_uint(prevColor.w), __float_as_uint(newColor.w)));
-    }
+    float4 existingColor = *imagePtr;
+    float4 newColor;
+    newColor.x = alpha * rgb.x + oneMinusAlpha * existingColor.x;
+    newColor.y = alpha * rgb.y + oneMinusAlpha * existingColor.y;
+    newColor.z = alpha * rgb.z + oneMinusAlpha * existingColor.z;
+    newColor.w = alpha + existingColor.w;
+
+    // global memory write
+    *imagePtr = newColor;
+
+    // END SHOULD-BE-ATOMIC REGION
+}
+
 
 
     __global__ void kernelRenderPixels() {
@@ -610,6 +618,7 @@ __device__ void shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4
             float rad = cuConstRendererParams.radius[i];
 
             if (pixelWithinCircle(pixelCenter, circlePos, rad)) {
+                // printf("Just before shadePixel\n"); it output it here, which means calling is fine
                 firstAttempt::shadePixel(i, pixelCenter, circlePos, imagePtr);
             }
         }
@@ -840,4 +849,5 @@ CudaRenderer::render() {
     // kernelRenderCircles<<<gridDim, blockDim>>>();
     // cudaDeviceSynchronize();
     firstAttempt::render(image->width, image->height);
+    printf("finished calling");
 }

@@ -19,20 +19,52 @@ inline float twoDimRead(std::vector<float> &tensor, int &x, int &y, const int &s
     // Note that sizeX is the size of a Row, not the number of rows
     return tensor[x * (sizeX)+ y];
 }
+    /* Here is an example of how to read/write 0's to  QK_t (N, N) using the 2D accessors
 
+           for (int i = 0; i < N; i++) {
+	       for (int j = 0; j < N; j++) {
+	           float val = twoDimRead(QK_t, i, j, N);
+               val = 0.0;
+	           twoDimWrite(QK_t, i, j, N, val);
+             }
+         }
+    */
 inline void twoDimWrite(std::vector<float> &tensor, int &x, int &y, const int &sizeX, float &val) {
     tensor[x * (sizeX) + y] = val;
 }
 
 // Step #2: Implement Read/Write Accessors for a 4D Tensor
 inline float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
-        const int &sizeX, const int &sizeY, const int &sizeZ) {
-    return tensor[(sizeZ * (sizeY * (x * (sizeX) + y) + z)) + b];
+        const int &sizeX, const int &sizeY, const int &sizeZ) { 
+    return tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b];
+    // this is equivalent to (batchIdx * cubeVolume(HxNxD)-locate the cube 
+    // + headIndex * planeSize(NxD)-locate the plane + sequenceIndex * rowSize(dimensionSize) + columnOffset(d)
 }
+    /* Here is an example of how to read/write 0's to  Q (B, H, N, d) using the 4D accessors
+
+        //loop over Batch Size
+         for (int b = 0; b < B; b++) {
+
+             //loop over Heads
+             for (int h = 0; h < H; h++) {
+
+                 //loop over Sequence Length
+                 for (int i = 0; i < N; i++) {
+
+                     //loop over Embedding Dimensionality
+                     for (int j = 0; j < d; j++) {
+                        float val = fourDimRead(Q, b, h, i, j, H, N, d);
+                        val = 0.0;
+                        fourDimWrite(Q, b, h, i, j, H, N, d, val);
+                     }
+                 }
+             }
+         }
+    */
 
 inline void fourDimWrite(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
         const int &sizeX, const int &sizeY, const int &sizeZ, float &val) {
-    tensor[(sizeZ * (sizeY * (x * (sizeX) + y) + z)) + b] = val;
+    tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b] = val;
 }
 
 // DO NOT EDIT THIS FUNCTION //
@@ -81,7 +113,7 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     at::Tensor OTensor = at::zeros({B, H, N, d}, at::kFloat);
 
     //Format O, Q, K, and V tensors into 4D vectors
-    std::vector<float> O = formatTensor(OTensor);
+    std::vector<float> O = formatTensor(OTensor); 
     std::vector<float> Q = formatTensor(QTensor);
     std::vector<float> K = formatTensor(KTensor);
     std::vector<float> V = formatTensor(VTensor);

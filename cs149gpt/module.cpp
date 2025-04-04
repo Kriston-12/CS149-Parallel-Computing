@@ -17,6 +17,7 @@
 // Step #1: Understand Read/Write Accessors for a 2D Tensor
 inline float twoDimRead(std::vector<float> &tensor, int &x, int &y, const int &sizeX) {
     // Note that sizeX is the size of a Row, not the number of rows
+    // float val = twoDimRead(QK_t, i, j, N);
     return tensor[x * (sizeX)+ y];
 }
     /* Here is an example of how to read/write 0's to  QK_t (N, N) using the 2D accessors
@@ -38,7 +39,7 @@ inline float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int
         const int &sizeX, const int &sizeY, const int &sizeZ) { 
     return tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b];
     // this is equivalent to (batchIdx * cubeVolume(HxNxD)-locate the cube 
-    // + headIndex * planeSize(NxD)-locate the plane + sequenceIndex * rowSize(dimensionSize) + columnOffset(d)
+    // + headIndex * planeSize(NxD)-locate the plane + sequenceIndex * rowSize(dimensionSize) + columnOffset(b)
 }
     /* Here is an example of how to read/write 0's to  Q (B, H, N, d) using the 4D accessors
 
@@ -156,6 +157,76 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     
     // -------- YOUR CODE HERE  -------- //
     
+    // for (int b = 0; b < B; b++) {
+    //     //loop over Heads
+    //     for (int h = 0; h < H; h++) {
+    //         //loop over Sequence Length
+    //         for (int i = 0; i < N; i++) {
+    //             //loop over Embedding Dimensionality
+    //             //Sum dot(Qrow, Kcol)
+    //             float sum = 0.f;
+    //             for (int j = 0; j < d; j++) {
+    //                 // Q[i * dimensionSize + j] * K[j * N + i]
+    //                 // return tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b];
+    //                 // this is equivalent to (batchIdx * cubeVolume(HxNxD)-locate the cube 
+    //                 // + headIndex * planeSize(NxD)-locate the plane + sequenceIndex * rowSize(dimensionSize) + columnOffset(b)
+    //                 // 第二个term--fourDimRead(K, b, h, j, i, H, d, N);是不行的，因为最后的i是row continuous 的，所以访问不到该访问列元素
+    //                 // 第二个acces是不行的，我这里默认了K = KT, 然后用的是KT的access策略，这是错误的，memory不是这么摆着的
+    //                 sum += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, j, i, H, d, N); 
+    //             }
+    //             twoDimWrite()
+    //         }
+    //     }
+    // }
+    
+    //loop over Batches
+    for (int b = 0; b < B; b++) {
+        //loop over Heads
+        for (int h = 0; h < H; h++) {
+            //loop over Sequence Length
+            for (int i = 0; i < N; i++) {
+                // loop over each row of K--each column of Kt
+                for (int k = 0; k < N; k++) {
+                    float sum = 0.f;
+                    //loop over Embedding Dimensionality
+
+                    for (int j = 0; j < d; j++){
+                        sum += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, k, j, H, N, d);
+                    }
+                    twoDimWrite(QK_t, i, k, N, sum);     
+                }
+            }
+
+            // Get P
+            for (int i = 0; i < N; i++) {
+                float rowSum = 0.f;
+                for (int j = 0; j < N; j++) {
+                    // Get Exp of each element and write them back. At the same time, calculate the row Sum for next step--getting P
+                    float val = std::exp(twoDimRead(QK_t, i, j, N));
+                    // twoDimWrite(QK_t, i, j, N, val); 
+                    rowSum += val;
+                }
+
+                for (int j = 0; j < N; j++) {
+                    float val = std::exp(twoDimRead(QK_t, i, j, N)) / rowSum;
+                    twoDimWrite(QK_t, i, j, N, val);
+                }
+            }
+
+            //3. QK_t * V[b][h]
+            for (int i = 0; i < N; i++) {
+                for (int j = 0; j < d; j++) {
+                    float sum = 0.f;
+                    for (int k = 0; k < N; k++) {
+                        sum += twoDimRead(QK_t, i, k, N) * fourDimRead(V, b, h, k, j, H, N, d);
+                    }
+                    fourDimWrite(O, b, h, i, j, H, N, d, sum);
+                }
+            }
+        }
+    }
+
+
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
     return torch::from_blob(O.data(), {B, H, N, d}, torch::TensorOptions().dtype(torch::kFloat32)).clone();

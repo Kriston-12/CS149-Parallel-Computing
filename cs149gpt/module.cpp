@@ -156,28 +156,8 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     */
     
     // -------- YOUR CODE HERE  -------- //
-    
-    // for (int b = 0; b < B; b++) {
-    //     //loop over Heads
-    //     for (int h = 0; h < H; h++) {
-    //         //loop over Sequence Length
-    //         for (int i = 0; i < N; i++) {
-    //             //loop over Embedding Dimensionality
-    //             //Sum dot(Qrow, Kcol)
-    //             float sum = 0.f;
-    //             for (int j = 0; j < d; j++) {
-    //                 // Q[i * dimensionSize + j] * K[j * N + i]
-    //                 // return tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b];
-    //                 // this is equivalent to (batchIdx * cubeVolume(HxNxD)-locate the cube 
-    //                 // + headIndex * planeSize(NxD)-locate the plane + sequenceIndex * rowSize(dimensionSize) + columnOffset(b)
-    //                 // 第二个term--fourDimRead(K, b, h, j, i, H, d, N);是不行的，因为最后的i是row continuous 的，所以访问不到该访问列元素
-    //                 // 第二个acces是不行的，我这里默认了K = KT, 然后用的是KT的access策略，这是错误的，memory不是这么摆着的
-    //                 sum += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, j, i, H, d, N); 
-    //             }
-    //             twoDimWrite()
-    //         }
-    //     }
-    // }
+    /* float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
+        const int &sizeX, const int &sizeY, const int &sizeZ) */
     
     //loop over Batches
     for (int b = 0; b < B; b++) {
@@ -191,8 +171,15 @@ torch::Tensor myNaiveAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
                     //loop over Embedding Dimensionality
 
                     for (int j = 0; j < d; j++){
+                        // 因为这里我们的K是untranposed, 实际上我们在使用K进行 Q * KT的操作
+                        // 对于Q的每个element，比如当前Q在第i行, 这一整行 Q[i][0,1,2,3....d-1] 需要和KT的某一列点乘得到结果S的某一个element
+                        // Eg: Q[i][0,1,2,3...d-1] * KT[0,1,2,3...d-1][K] = Q[i][K]
+                        // 但是这里我们使用的是K而不是KT，所以 Q[i][0, 1, 2, 3... d-1] * K[K][0,1,2,3...d-1]
+                        // 下面这里就是在进行这个操作，i和k是外层的循环，表示Q的行号不变，内层j进行沿着行计算，
+                        // KT对于Q的每一行，都需要将所有的列和Q的一行进行计算得到S的一整行，这也是为什么k的循环在i的循环内部的原因
                         sum += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, k, j, H, N, d);
                     }
+                    // 上面的j循环结束，说明Q的i行和KT的k列点乘完毕，得到 S[i][k], 下面就是正常的写操作
                     twoDimWrite(QK_t, i, k, N, sum);     
                 }
             }

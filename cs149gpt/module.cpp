@@ -243,7 +243,73 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
     std::vector<float> QK_t = formatTensor(QK_tTensor);
 
     // -------- YOUR CODE HERE  -------- //
+    // L1d = 256kb, cache line = 64 Bytes
+    // Just let 3 * blockSize < 256kb would be fine 
+    // Coulde select block size = 16 x 16 -- each row of block fits in a line 
+    constexpr int dim = 16;
+    //loop over Batches
+    for (int b = 0; b < B; b++) {
+        //loop over Heads
+        for (int h = 0; h < H; h++) {
+            //loop over Sequence Length
+            for (int iblock = 0; iblock < N; i += dim) {
+                // loop over each row of K--each column of Kt
+                for (int kblock = 0; kblock < N; kblock += dim) {
+                    for (int jblock = 0; jblock < d; jblock += dim) {
+                        int ibound = std::min(N, iblock + l);
+                        int jbound = std::min(d, jblock + l);
+                        int kbound = std::min(N, kblock + l);
+                        
+                        float curVal = fourDimRead(O, );
+                        for (int i = 0; i < ibound; ++i) {
+                            for (int k = 0; k < kbound; ++k) {
+                                for (int j = 0; j < jbound; ++j) {
+                                    curVal += fourDimRead(Q, b, h, iblock + i, jblock + j, H, N, d) * fourDimRead(K, b, h, kblock + k, jblock + j, H, N, d)
+                                }
+                                // End loop j, which means we handled one entire column of a block, we should write it back
+                                twoDimWrite(QK_t, iblock, kblock, N, curVal);
+                            }
+                        }
+                    }
+                }
+            }
+            // I believe softmax does not need block 
+            for (int i = 0; i < N; i++){
+                float sum = 0.f;
+                for (int j = 0; j < N; j++) {
+                    sum += std::exp(twoDimRead(QK_t, i, j, N));
+                }
+                for (int j = 0; j < N; j++) {
+                    float val = std::exp(twoDimRead(QK_t, i, j, N)) / sum;
+                    twoDimWrite(QK_t, i, j, N, val);
+                }
+            }
 
+            // O = P @ V
+            for (int iblock = 0; iblock < N; iblock += dim) {
+                for (int kblock = 0; kblock < d; kblock += dim) {
+                    for (int jblock = 0; jblock < N; jblock += dim) {
+                        int ibound = std::min(N, iblock + l);
+                        int jbound = std::min(N, jblock + l);
+                        int kbound = std::min(d, kblock + l);
+                        // fourDimWrite(O, b, h, i, j, H, N, d, sum);
+                        float curVal = twoDimRead(O, b, h, iblock, jblock, H, N, d);
+
+                        for (int i = 0; i < ibound; ++i) {
+                            for (int k = 0; k < kbound; ++k) {
+                                for (int j = 0; j < jbound; ++j) {
+                                    curVal += twoDimRead(QK_t, iblock + i, jblock + j, N) * 
+                                        fourDimRead(O, b, h, iblock + i, kblock + k, jblock + j, d);
+                                }
+                                
+                            }
+                        }
+                    }
+                }
+            }    
+
+        }
+    }    
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //
     return torch::from_blob(O.data(), {B, H, N, d}, torch::TensorOptions().dtype(torch::kFloat32)).clone();

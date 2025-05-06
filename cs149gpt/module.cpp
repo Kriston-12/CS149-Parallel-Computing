@@ -252,22 +252,23 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
         //loop over Heads
         for (int h = 0; h < H; h++) {
             //loop over Sequence Length
-            for (int iblock = 0; iblock < N; i += dim) {
+            for (int iblock = 0; iblock < N; iblock += dim) {
                 // loop over each row of K--each column of Kt
                 for (int kblock = 0; kblock < N; kblock += dim) {
                     for (int jblock = 0; jblock < d; jblock += dim) {
-                        int ibound = std::min(N, iblock + l);
-                        int jbound = std::min(d, jblock + l);
-                        int kbound = std::min(N, kblock + l);
+                        int ibound = std::min(N, iblock + dim);
+                        int jbound = std::min(d, jblock + dim);
+                        int kbound = std::min(N, kblock + dim);
                         
-                        float curVal = fourDimRead(O, );
-                        for (int i = 0; i < ibound; ++i) {
-                            for (int k = 0; k < kbound; ++k) {
-                                for (int j = 0; j < jbound; ++j) {
-                                    curVal += fourDimRead(Q, b, h, iblock + i, jblock + j, H, N, d) * fourDimRead(K, b, h, kblock + k, jblock + j, H, N, d)
+                       
+                        for (int i = iblock; i < ibound; ++i) {
+                            for (int k = kblock; k < kbound; ++k) {
+                                float curVal = twoDimRead(QK_t, i, k, N);
+                                for (int j = jblock; j < jbound; ++j) {
+                                    curVal += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, k, j, H, N, d);
                                 }
                                 // End loop j, which means we handled one entire column of a block, we should write it back
-                                twoDimWrite(QK_t, iblock, kblock, N, curVal);
+                                twoDimWrite(QK_t, i, k, N, curVal);
                             }
                         }
                     }
@@ -289,18 +290,20 @@ torch::Tensor myUnfusedAttentionBlocked(torch::Tensor QTensor, torch::Tensor KTe
             for (int iblock = 0; iblock < N; iblock += dim) {
                 for (int kblock = 0; kblock < d; kblock += dim) {
                     for (int jblock = 0; jblock < N; jblock += dim) {
-                        int ibound = std::min(N, iblock + l);
-                        int jbound = std::min(N, jblock + l);
-                        int kbound = std::min(d, kblock + l);
+                        int ibound = std::min(N, iblock + dim);
+                        int jbound = std::min(N, jblock + dim);
+                        int kbound = std::min(d, kblock + dim);
                         // fourDimWrite(O, b, h, i, j, H, N, d, sum);
-                        float curVal = twoDimRead(O, b, h, iblock, jblock, H, N, d);
+                        
 
-                        for (int i = 0; i < ibound; ++i) {
-                            for (int k = 0; k < kbound; ++k) {
-                                for (int j = 0; j < jbound; ++j) {
-                                    curVal += twoDimRead(QK_t, iblock + i, jblock + j, N) * 
-                                        fourDimRead(O, b, h, iblock + i, kblock + k, jblock + j, d);
+                        for (int i = iblock; i < ibound; ++i) {
+                            for (int k = kblock; k < kbound; ++k) {
+                                float curVal = fourDimRead(O, b, h, i, k, H, N, d);
+                                for (int j = jblock; j < jbound; ++j) {
+                                    curVal += twoDimRead(QK_t, i, j, N) * 
+                                        fourDimRead(V, b, h, j, k, H, N, d);
                                 }
+                                fourDimWrite(O, b, h, i, k, H, N, d, curVal); 
                                 
                             }
                         }

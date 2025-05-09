@@ -358,15 +358,34 @@ torch::Tensor myFusedAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
                 at::Tensor ORowTensor = temp.index({torch::indexing::Slice(omp_get_thread_num(), torch::indexing::None)});      
                 std::vector<float> ORow = formatTensor(ORowTensor);
 		//YOUR CODE HERE
-            }
-            for (int k = 0; k < N; k++) {
-                float curval = 0.0;
-                for (int j = 0; j < d; ++) {
-                    curval ++ fourdimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, j, k, H, N, d);
+                float rowSum = 0.f;
+                for (int k = 0; k < N; k++) {
+                    float QKelement = 0.f;
+                    for (int j = 0; j < d; j++) {
+                        QKelement += fourDimRead(Q, b, h, i, j, H, N, d) * fourDimRead(K, b, h, k, j, H, N, d);
+                    }
+                    // After we get each element of QK, we add it to our rowSum for following softmax right away,
+                    // instead of materializing the entire N x N QK matrix
+                    ORow[k] = std::exp(QKelement);  // get exponential right away
+                    rowSum += ORow[k];   // calculate rowSum right away, for softmax
                 }
-                ORow[k] = curval;
+
+                
+                // Softmax last step: divide by rowSum;
+                for (int k = 0; k < N; k++) {
+                    ORow[k] /= rowSum;
+                }
+
+                for (int j = 0; j < d; j++) {
+                    float Oelement = 0.f;
+                    for (int k = 0; k < N; k++) {
+                        Oelement += ORow[k] * fourDimRead(V, b, h, k, j, H, N, d);
+                        // fourDimWrite(O, b, h, i, k, H, N, d, curVal); This line is for reference, useless here
+                    }
+                    fourDimWrite(O, b, h, i, j, H, N, d, Oelement);
+                }
             }
-	}
+	    }
     }
 	    
 	

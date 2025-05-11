@@ -434,6 +434,20 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     std::vector<float> lnew = formatTensor(LnewTensor);
 
     // -------- YOUR CODE HERE  -------- //
+    constexpr int m = 256 * 1024 / sizeof(float)
+    constexpr int bc = (m + 4 * d - 1) / (4 * d);
+    constexpr int br = std::min(bc, d);
+    constexpr int tc = (N + bc) / bc;
+    constexpr int tl = (N + br) / br;
+
+
+    for (int b = 0; b < B; b++){
+        //loop over heads
+        for (int h = 0; h < H; h++){
+
+        }
+    }
+
 
     // DO NOT EDIT THIS RETURN STATEMENT //
     // It formats your C++ Vector O back into a Tensor of Shape (B, H, N, d) and returns it //

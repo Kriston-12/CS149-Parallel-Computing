@@ -30,12 +30,12 @@ inline float twoDimRead(std::vector<float> &tensor, int &x, int &y, const int &s
              }
          }
     */
-inline void twoDimWrite(std::vector<float> &tensor, int &x, int &y, const int &sizeX, float &val) {
+inline void twoDimWrite(std::vector<float> &tensor, int x, int y, const int &sizeX, float val) {
     tensor[x * (sizeX) + y] = val;
 }
 
 // Step #2: Implement Read/Write Accessors for a 4D Tensor
-inline float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
+inline float fourDimRead(std::vector<float> &tensor, int x, int y, int z, int b, 
         const int &sizeX, const int &sizeY, const int &sizeZ) { 
     return tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b];
     // this is equivalent to (batchIdx * cubeVolume(HxNxD)-locate the cube 
@@ -63,8 +63,8 @@ inline float fourDimRead(std::vector<float> &tensor, int &x, int &y, int &z, int
          }
     */
 
-inline void fourDimWrite(std::vector<float> &tensor, int &x, int &y, int &z, int &b, 
-        const int &sizeX, const int &sizeY, const int &sizeZ, float &val) {
+inline void fourDimWrite(std::vector<float> &tensor, int x, int y, int z, int b, 
+        const int &sizeX, const int &sizeY, const int &sizeZ, float val) {
     tensor[x * sizeX * sizeY * sizeZ + y * sizeY * sizeZ + z * sizeZ + b] = val;
 }
 
@@ -434,17 +434,85 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     std::vector<float> lnew = formatTensor(LnewTensor);
 
     // -------- YOUR CODE HERE  -------- //
-    constexpr int m = 256 * 1024 / sizeof(float)
-    constexpr int bc = (m + 4 * d - 1) / (4 * d);
-    constexpr int br = std::min(bc, d);
-    constexpr int tc = (N + bc) / bc;
-    constexpr int tl = (N + br) / br;
+    // The variables below are given in function arguments
+    // constexpr int m = 256 * 1024 / sizeof(float)
+    // constexpr int bc = (m + 4 * d - 1) / (4 * d);
+    // constexpr int br = std::min(bc, d);
+
+    const int Tc = (N + Bc) / Bc;
+    const int Tr = (N + Bc) / Bc;
 
 
     for (int b = 0; b < B; b++){
         //loop over heads
         for (int h = 0; h < H; h++){
+            for (int j = 0; j < Tc; j++) {
+                int colStart = j * Bc;
+                int colSize = std::min(Bc, N - colStart);
+                for (int x = 0; x < colSize; x++) { 
+                    for (int y = 0; y < d; y++) {
+                        float Kval = fourDimRead(K, b, h, colStart + x, y, H, N, d);
+                        twoDimWrite(Kj, x, y, d, Kval);
 
+                        float Vval = fourDimRead(V, b, h, colStart + x, y, H, N, d);
+                        twoDimWrite(Vj, x, y, d, Kval);
+                    }
+                }
+
+                for (int i = 0; i < Tr; i++) {
+                    int rowStart = i * Br;
+                    int rowSize = std::min(Br, N - rowStart);
+
+                    for (int x = 0; x < rowSize; x++) {
+                        for (int y = 0; y < d; y++) {
+                            float Qval = fourDimRead(Q, b, h, rowStart + x, y, H, N, d);
+                            twoDimWrite(Qi,x, y, d, Qval);
+
+                            float Oval = fourDimRead(O, b, h, rowStart + x, y, H, N, d);
+                            twoDimWrite(Oi, x, y, d, Oval);
+                        }
+                        li[x] = l[rowStart + x]; // twoDimRead(l, rowStart + x, 0, 1);
+                    }
+                    
+                    // Sij = Qi * KjT. Pij = exp(Sij)
+                    for (int x = 0; x < rowSize; x++) {
+                        float lRowSum = 0.f;
+                        for (int y = 0; y < colSize; y++) {
+                            float eleVal = 0.f;
+                            for (int z = 0; z < d; z++) {
+                                eleVal += twoDimRead(Qi, x, z, d) * twoDimRead(Kj, y, z, d);
+                            }
+                            twoDimWrite(Sij, x, y, Bc, eleVal); // Sij.dim = (Br, Bc), would be flushed after each row tile computation. Never think of twoDimWrite(Sij, rowSize + x, colSize + y, Bc, eleVal);
+                            float pVal = std::exp(eleVal);
+                            twoDimWrite(Pij, x, y, Bc, pVal);
+                            lRowSum += pVal;
+                        }
+                        lij[x] = lRowSum;
+
+                        // Lnew = lij + li
+                        lnew[x] = lRowSum + li[x];
+                    }
+
+                    // Oi = (li Oi + Pij Vj) / Lnew
+                    for (int x = 0; x < rowSize; x++) {
+                        float lold = li[x];
+                        float PVele = 0.f;
+                        for (int y = 0; y < d; y++) {
+                            for (int z = 0; z < Bc; z++) {
+                                PVele += twoDimRead(Pij, x, z, Bc) * twoDimRead(Vj, z, y, d);
+                            }
+                            twoDimWrite(Oi, x, y, d, (lold * twoDimRead(Oi, x, y, d) + PVele) / lnew[x]);
+                        }
+                    }
+                    for (int x = 0; x < rowSize; x++) {
+                        for (int y = 0; y < d; y++) {
+                            fourDimWrite(O, b, h, rowStart + x, y, H, N, d, twoDimRead(Oi, x, y, d));
+                        }
+
+                        l[rowStart + x] = lnew[x];
+                    }
+                }
+            }
         }
     }
 

@@ -439,23 +439,35 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
     // constexpr int bc = (m + 4 * d - 1) / (4 * d);
     // constexpr int br = std::min(bc, d);
 
-    const int Tc = (N + Bc) / Bc;
-    const int Tr = (N + Bc) / Bc;
+    const int Tc = (N + Bc - 1) / Bc;
+    const int Tr = (N + Br - 1) / Br;
 
 
     for (int b = 0; b < B; b++){
         //loop over heads
         for (int h = 0; h < H; h++){
+
+            std::fill(Sij.begin(), Sij.end(), 0.f); // could also use std::vector<float> Sij = formatTensor(SijTensor);, but formatTensor() would have memory allocation cost
+            std::fill(Pij.begin(), Pij.end(), 0.f);
+            std::fill(Kj.begin(), Kj.end(), 0.f);
+            std::fill(Vj.begin(), Vj.end(), 0.f);
+            std::fill(Qi.begin(), Qi.end(), 0.f);
+            std::fill(l.begin(), l.end(), 0.f);
+            std::fill(PV.begin(), PV.end(), 0.f);
+            std::fill(li.begin(), li.end(), 0.f);
+            std::fill(lij.begin(), lij.end(), 0.f);
+            std::fill(lnew.begin(), lnew.end(), 0.f);
+
             for (int j = 0; j < Tc; j++) {
                 int colStart = j * Bc;
                 int colSize = std::min(Bc, N - colStart);
                 for (int x = 0; x < colSize; x++) { 
                     for (int y = 0; y < d; y++) {
-                        float Kval = fourDimRead(K, b, h, colStart + x, y, H, N, d);
+                        float Kval = fourDimRead(K, b, h, colStart + x, y, H, N, d); // Kj.dim = (bc, d)
                         twoDimWrite(Kj, x, y, d, Kval);
 
-                        float Vval = fourDimRead(V, b, h, colStart + x, y, H, N, d);
-                        twoDimWrite(Vj, x, y, d, Kval);
+                        float Vval = fourDimRead(V, b, h, colStart + x, y, H, N, d); // Vj.dim = (bc, d)
+                        twoDimWrite(Vj, x, y, d, Vval);
                     }
                 }
 
@@ -465,13 +477,13 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
 
                     for (int x = 0; x < rowSize; x++) {
                         for (int y = 0; y < d; y++) {
-                            float Qval = fourDimRead(Q, b, h, rowStart + x, y, H, N, d);
-                            twoDimWrite(Qi,x, y, d, Qval);
+                            float Qval = fourDimRead(Q, b, h, rowStart + x, y, H, N, d); // Qi.dim = (br, d)
+                            twoDimWrite(Qi, x, y, d, Qval);
 
-                            float Oval = fourDimRead(O, b, h, rowStart + x, y, H, N, d);
+                            float Oval = fourDimRead(O, b, h, rowStart + x, y, H, N, d); // O.dim = (br, d)
                             twoDimWrite(Oi, x, y, d, Oval);
                         }
-                        li[x] = l[rowStart + x]; // twoDimRead(l, rowStart + x, 0, 1);
+                        li[x] = l[rowStart + x]; // twoDimRead(l, rowStart + x, 0, 1); len(li) = Br
                     }
                     
                     // Sij = Qi * KjT. Pij = exp(Sij)
@@ -496,12 +508,13 @@ torch::Tensor myFlashAttention(torch::Tensor QTensor, torch::Tensor KTensor, tor
                     // Oi = (li Oi + Pij Vj) / Lnew
                     for (int x = 0; x < rowSize; x++) {
                         float lold = li[x];
-                        float PVele = 0.f;
                         for (int y = 0; y < d; y++) {
+                            float PVele = 0.f;
                             for (int z = 0; z < Bc; z++) {
                                 PVele += twoDimRead(Pij, x, z, Bc) * twoDimRead(Vj, z, y, d);
                             }
-                            twoDimWrite(Oi, x, y, d, (lold * twoDimRead(Oi, x, y, d) + PVele) / lnew[x]);
+                            float Oold = twoDimRead(Oi, x, y, d);
+                            twoDimWrite(Oi, x, y, d, (lold * Oold + PVele) / lnew[x]);
                         }
                     }
                     for (int x = 0; x < rowSize; x++) {

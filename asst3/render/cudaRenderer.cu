@@ -547,6 +547,7 @@ shadePixel(int circleIndex, float2 pixelCenter, float3 p, float4* imagePtr) {
     float rad = cuConstRendererParams.radius[circleIndex];;
     float maxDist = rad * rad;
 
+
     // circle does not contribute to the image
     if (pixelDist > maxDist)
         return;
@@ -849,5 +850,5 @@ CudaRenderer::render() {
     // kernelRenderCircles<<<gridDim, blockDim>>>();
     // cudaDeviceSynchronize();
     firstAttempt::render(image->width, image->height);
-    printf("finished calling");
+    // printf("finished calling");
 }

@@ -38,3 +38,6 @@ objs/
 *.exe
 *.out
 *.app
+
+# Graph dataset
+*.graph

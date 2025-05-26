@@ -44,7 +44,6 @@ void top_down_step(
         // attempt to add all neighbors to the new frontier
         for (int neighbor=start_edge; neighbor<end_edge; neighbor++) {
             int outgoing = g->outgoing_edges[neighbor];
-
             if (distances[outgoing] == NOT_VISITED_MARKER) {
                 distances[outgoing] = distances[node] + 1;
                 int index = new_frontier->count++;
@@ -53,6 +52,46 @@ void top_down_step(
         }
     }
 }
+
+void top_down_step_parallelize(
+    Graph g,
+    vertex_set* frontier,
+    vertex_set* new_frontier,
+    int* distances)
+{   
+    #pragma omp parallel
+    {
+        #pragma omp for schedule(dynamic, 100)
+        for (int i = 0; i < frontier->count; i++) {
+            int node = frontier->vertices[i];
+
+            int start_edge = g->outgoing_starts[node];
+            int end_edge = (node == g->num_nodes - 1)
+                            ? g->num_edges
+                            : g->outgoing_starts[node + 1];
+
+            for (int neighbor = start_edge; neighbor < end_edge; neighbor++) {
+                int outgoing = g->outgoing_edges[neighbor];
+
+                // version of not using compare and swap
+                // if (distances[outgoing] == NOT_VISITED_MARKER) {
+                //     distances[outgoing] = distances[node] + 1;
+                //     #pragma omp atomic
+                //     int index = new_frontier->count++;
+                //     new_frontier->vertices[index] = outgoing;
+                // }
+
+                // version using comparing and swap
+                if(__sync_bool_compare_and_swap(&distances[outgoing], NOT_VISITED_MARKER, distances[node] + 1)) {
+                    int index = __sync_fetch_and_add(&new_frontier->count, 1);
+                    new_frontier->vertices[index] = outgoing;
+                }
+                
+            }
+        }
+    }
+}
+
 
 // Implements top-down BFS.
 //
@@ -85,6 +124,7 @@ void bfs_top_down(Graph graph, solution* sol) {
         vertex_set_clear(new_frontier);
 
         top_down_step(graph, frontier, new_frontier, sol->distances);
+        // top_down_step_parallelize(graph, frontier, new_frontier, sol->distances);
 
 #ifdef VERBOSE
     double end_time = CycleTimer::currentSeconds();

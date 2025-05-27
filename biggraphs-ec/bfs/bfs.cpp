@@ -5,6 +5,8 @@
 #include <string.h>
 #include <cstddef>
 #include <omp.h>
+#include <vector>
+#include <cstring> 
 
 #include "../common/CycleTimer.h"
 #include "../common/graph.h"
@@ -36,7 +38,7 @@ void top_down_step(
 
         int node = frontier->vertices[i];
 
-        int start_edge = g->outgoing_starts[node];
+        int start_edge = g->outgoing_starts[node]; // node = 0, outgoingstarts[0] = 0 = starEdge, outgoing_edges[0] = 1
         int end_edge = (node == g->num_nodes - 1)
                            ? g->num_edges
                            : g->outgoing_starts[node + 1];
@@ -92,6 +94,76 @@ void top_down_step_parallelize(
     }
 }
 
+void top_down_step_parallelize1(
+    Graph g,
+    vertex_set* frontier,
+    vertex_set* new_frontier,
+    int* distances)
+{   
+    const int num_threads = omp_get_max_threads();
+
+    // Allocate per-thread local buffer for new frontier
+    std::vector<std::vector<Vertex>> local_frontiers(num_threads);
+    const int new_dist = distances[frontier->vertices[0]] + 1;
+
+    #pragma omp parallel
+    {   
+        int tid = omp_get_thread_num();
+        std::vector<Vertex>& buffer = local_frontiers[tid];
+
+        #pragma omp for schedule(dynamic, 64)
+        for (int i = 0; i < frontier->count; i++) {
+
+            int node = frontier->vertices[i];
+            const Vertex* startEdge = outgoing_begin(g, node);
+            const Vertex* endEdge = outgoing_end(g, node);
+
+            for (const Vertex* neighbor = startEdge; neighbor < endEdge; ++neighbor) {
+                int target = *neighbor;
+
+                // Use CAS to ensure only one thread updates the distance
+                if (__sync_bool_compare_and_swap(&distances[target], NOT_VISITED_MARKER, new_dist)) {
+                    buffer.emplace_back(target);  // Local write: cache-friendly
+                }
+
+            }
+        }   
+    }
+    // Merge all local buffers into the global new_frontier
+    int total = 0;
+    for (int t = 0; t < num_threads; ++t) {
+        total += local_frontiers[t].size();
+    }
+
+    // Reserve space for new frontier
+    int start_index = __sync_fetch_and_add(&new_frontier->count, total);
+
+    // Copy each thread's results into global frontier
+    #pragma omp parallel for
+    for (int t = 0; t < num_threads; ++t) {
+        const std::vector<Vertex>& buffer = local_frontiers[t];
+        int offset = 0;
+
+        
+        // Compute thread's offset within global frontier
+        for (int i = 0; i < t; ++i) {
+            offset += local_frontiers[i].size();
+        }
+
+        std::memcpy(
+            new_frontier->vertices + start_index + offset,
+            buffer.data(),
+            buffer.size() * sizeof(Vertex));
+    }
+    
+}
+
+void top_down_step2(Graph g, vertex_set *frontier, vertex_set *new_frontier,
+                   int *distances) {
+  const int new_dist = distances[frontier->vertices[0]] + 1;
+
+}
+
 
 // Implements top-down BFS.
 //
@@ -116,15 +188,18 @@ void bfs_top_down(Graph graph, solution* sol) {
     sol->distances[ROOT_NODE_ID] = 0;
 
     while (frontier->count != 0) {
-
+        // printf("frontier->count = %d\n", frontier->count);
 #ifdef VERBOSE
         double start_time = CycleTimer::currentSeconds();
 #endif
 
         vertex_set_clear(new_frontier);
 
-        top_down_step(graph, frontier, new_frontier, sol->distances);
+        // top_down_step(graph, frontier, new_frontier, sol->distances);
         // top_down_step_parallelize(graph, frontier, new_frontier, sol->distances);
+        // top_down_step2(graph, frontier, new_frontier, sol->distances);
+        top_down_step_parallelize1(graph, frontier, new_frontier, sol->distances);
+
 
 #ifdef VERBOSE
     double end_time = CycleTimer::currentSeconds();
@@ -137,6 +212,8 @@ void bfs_top_down(Graph graph, solution* sol) {
         new_frontier = tmp;
     }
 }
+
+
 
 void bfs_bottom_up(Graph graph, solution* sol)
 {

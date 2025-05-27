@@ -7,6 +7,7 @@
 #include <omp.h>
 #include <vector>
 #include <cstring> 
+#include <memory>
 
 #include "../common/CycleTimer.h"
 #include "../common/graph.h"
@@ -104,6 +105,10 @@ void top_down_step_parallelize1(
 
     // Allocate per-thread local buffer for new frontier
     std::vector<std::vector<Vertex>> local_frontiers(num_threads);
+    #pragma omp parallel for
+    for (int i = 0; i < num_threads; ++i) {
+        local_frontiers[i].reserve(frontier->count); // buffer size 可调
+    }
     const int new_dist = distances[frontier->vertices[0]] + 1;
 
     #pragma omp parallel
@@ -158,10 +163,37 @@ void top_down_step_parallelize1(
     
 }
 
-void top_down_step2(Graph g, vertex_set *frontier, vertex_set *new_frontier,
-                   int *distances) {
+void top_down_step2(Graph g, vertex_set* frontier, vertex_set* new_frontier,
+                   int* distances) {
   const int new_dist = distances[frontier->vertices[0]] + 1;
 
+//   const int max_frontier_size = frontier->count;
+
+#pragma omp parallel
+  {
+    int tid = omp_get_thread_num();
+
+    // RAII
+    std::unique_ptr<Vertex[]> buffer(new Vertex[g->num_nodes]);
+    int buffer_size = 0;
+
+    #pragma omp for schedule(guided)
+    for (int i = 0; i < frontier->count; i++) {
+      const int node = frontier->vertices[i];
+
+      for (const Vertex* x = outgoing_begin(g, node), * limit = outgoing_end(g, node); x < limit; x++) {
+
+        if (distances[*x] == NOT_VISITED_MARKER && __sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, new_dist)) {
+            buffer[buffer_size++] = *x;
+        }
+      }
+    }
+
+    
+    int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
+    std::memcpy(new_frontier->vertices + index, buffer.get(),
+                buffer_size * sizeof(Vertex));
+    } 
 }
 
 
@@ -197,8 +229,8 @@ void bfs_top_down(Graph graph, solution* sol) {
 
         // top_down_step(graph, frontier, new_frontier, sol->distances);
         // top_down_step_parallelize(graph, frontier, new_frontier, sol->distances);
-        // top_down_step2(graph, frontier, new_frontier, sol->distances);
-        top_down_step_parallelize1(graph, frontier, new_frontier, sol->distances);
+        top_down_step2(graph, frontier, new_frontier, sol->distances);
+        // top_down_step_parallelize1(graph, frontier, new_frontier, sol->distances);
 
 
 #ifdef VERBOSE

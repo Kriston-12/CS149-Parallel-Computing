@@ -176,7 +176,6 @@ void top_down_step2(Graph g, vertex_set* frontier, vertex_set* new_frontier,
 
 #pragma omp parallel
   {
-    int tid = omp_get_thread_num();
 
     // RAII
     std::unique_ptr<Vertex[]> buffer(new Vertex[g->num_nodes]);
@@ -188,7 +187,7 @@ void top_down_step2(Graph g, vertex_set* frontier, vertex_set* new_frontier,
 
       for (const Vertex* x = outgoing_begin(g, node), * limit = outgoing_end(g, node); x < limit; x++) {
 
-        if (distances[*x] == NOT_VISITED_MARKER && __sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, new_dist)) {
+        if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, new_dist)) {
             buffer[buffer_size++] = *x;
         }
       }
@@ -199,6 +198,26 @@ void top_down_step2(Graph g, vertex_set* frontier, vertex_set* new_frontier,
     std::memcpy(new_frontier->vertices + index, buffer.get(),
                 buffer_size * sizeof(Vertex));
     } 
+}
+
+void top_down_step3(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances, int level) {
+#pragma omp parallel 
+{
+    std::unique_ptr<Vertex[]> buffer(new Vertex[g->num_nodes]);
+    int buffer_size = 0;
+
+    #pragma omp for schedule(guided)
+    for (int i = 0; i < frontier->count; i++) {
+        const int node = frontier->vertices[i];
+        for (const Vertex* x = outgoing_begin(g, node), *limit = outgoing_end(g, node); x < limit; x++) {
+            if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, level)) {
+                buffer[buffer_size++] = *x;
+            }
+        }
+    }
+    int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
+    std::memcpy(new_frontier->vertices + index, buffer.get(), buffer_size * sizeof(Vertex));
+}
 }
 
 
@@ -225,6 +244,7 @@ void bfs_top_down(Graph graph, solution* sol) {
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
 
+    int level = 1;
     while (frontier->count != 0) {
         // printf("frontier->count = %d\n", frontier->count);
 #ifdef VERBOSE
@@ -235,8 +255,10 @@ void bfs_top_down(Graph graph, solution* sol) {
 
         // top_down_step(graph, frontier, new_frontier, sol->distances);
         // top_down_step_parallelize(graph, frontier, new_frontier, sol->distances);
-        top_down_step2(graph, frontier, new_frontier, sol->distances);
+        // top_down_step2(graph, frontier, new_frontier, sol->distances);
+        top_down_step3(graph, frontier, new_frontier, sol->distances, level);
         // top_down_step_parallelize1(graph, frontier, new_frontier, sol->distances);
+        level++;
 
 
 #ifdef VERBOSE
@@ -255,8 +277,18 @@ void bfs_top_down(Graph graph, solution* sol) {
 }
 
 
-void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances) 
+void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances, int nextLevel)  
 {
+#pragma omp parallel
+{
+    Vertex* buffer = new Vertex[g->num_nodes];
+    int buffer_size = 0;
+    
+    // #pragma omp for schedule(dynamic, 512)
+    // for (int v = 0; v < g->num_nodes, v++) {
+    //     if (distances[v] == NOT_VISITED_MARKER) {}
+    // }
+}
 
 }
 
@@ -290,16 +322,17 @@ void bfs_bottom_up(Graph graph, solution* sol)
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
 
+    int level = 1;
     while (frontier->count != 0) {
         vertex_set_clear(new_frontier);
 
-        bottomUpParallel(graph, frontier, new_frontier, sol->distances);
+        bottomUpParallel(graph, frontier, new_frontier, sol->distances, level);
 
         vertex_set* temp = frontier;
         frontier = new_frontier;
         new_frontier = temp;
     }
-    
+
     vertex_set_free(&list1);
     vertex_set_free(&list2);
 }

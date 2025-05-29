@@ -25,6 +25,11 @@ void vertex_set_init(vertex_set* list, int count) {
     vertex_set_clear(list);
 }
 
+void vertex_set_free(vertex_set* list) {
+    free(list->vertices);
+    list->vertices = NULL;
+}
+
 // Take one step of "top-down" BFS.  For each vertex on the frontier,
 // follow all outgoing edges, and add all neighboring vertices to the
 // new_frontier.
@@ -212,6 +217,7 @@ void bfs_top_down(Graph graph, solution* sol) {
     vertex_set* new_frontier = &list2;
 
     // initialize all nodes to NOT_VISITED
+    #pragma omp parallel for
     for (int i=0; i<graph->num_nodes; i++)
         sol->distances[i] = NOT_VISITED_MARKER;
 
@@ -243,8 +249,16 @@ void bfs_top_down(Graph graph, solution* sol) {
         frontier = new_frontier;
         new_frontier = tmp;
     }
+
+    vertex_set_free(&list1);
+    vertex_set_free(&list2);
 }
 
+
+void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances) 
+{
+
+}
 
 
 void bfs_bottom_up(Graph graph, solution* sol)
@@ -260,7 +274,37 @@ void bfs_bottom_up(Graph graph, solution* sol)
     // As was done in the top-down case, you may wish to organize your
     // code by creating subroutine bottom_up_step() that is called in
     // each step of the BFS process.
+    vertex_set list1;
+    vertex_set list2;
+    
+    vertex_set_init(&list1, graph->num_nodes);
+    vertex_set_init(&list1, graph->num_nodes);
+
+    vertex_set* frontier = &list1;
+    vertex_set* new_frontier = &list2;
+
+    #pragma omp parallel for
+    for (int i=0; i<graph->num_nodes; i++)
+        sol->distances[i] = NOT_VISITED_MARKER;
+
+    frontier->vertices[frontier->count++] = ROOT_NODE_ID;
+    sol->distances[ROOT_NODE_ID] = 0;
+
+    while (frontier->count != 0) {
+        vertex_set_clear(new_frontier);
+
+        bottomUpParallel(graph, frontier, new_frontier, sol->distances);
+
+        vertex_set* temp = frontier;
+        frontier = new_frontier;
+        new_frontier = temp;
+    }
+    
+    vertex_set_free(&list1);
+    vertex_set_free(&list2);
 }
+
+
 
 void bfs_hybrid(Graph graph, solution* sol)
 {

@@ -208,6 +208,7 @@ void top_down_step3(Graph g, vertex_set* frontier, vertex_set* new_frontier, int
 
     #pragma omp for schedule(guided)
     for (int i = 0; i < frontier->count; i++) {
+        
         const int node = frontier->vertices[i];
         for (const Vertex* x = outgoing_begin(g, node), *limit = outgoing_end(g, node); x < limit; x++) {
             if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, level)) {
@@ -281,7 +282,7 @@ void bfs_top_down(Graph graph, solution* sol) {
 }
 
 
-void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances, int nextLevel)  
+void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances, int currentLevel, int nextLevel)  
 {
 #pragma omp parallel
 {   
@@ -290,15 +291,17 @@ void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, i
     int buffer_size = 0;
     
     #pragma omp for schedule(dynamic, 512)
-    for (int v = 0; v < g->num_nodes; v++) { // loop through 所有node，对于任意node，如果这个node
+    for (int v = 0; v < g->num_nodes; v++) { // loop through 所有node，
         if (distances[v] != NOT_VISITED_MARKER) {continue;}
 
         for (const Vertex* u = incoming_begin(g, v), *end = incoming_end(g, v); u < end; ++u) {
-            if (__sync_bool_compare_and_swap(distances + *u, NOT_VISITED_MARKER, nextLevel)) {
+            if (distances[*u] == currentLevel) {
+                distances[v] = nextLevel;
                 buffer[buffer_size++] = v;
-                // break;
+                break;
             }
         }
+        
     }
 
     int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
@@ -340,15 +343,18 @@ void bfs_bottom_up(Graph graph, solution* sol)
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;
     sol->distances[ROOT_NODE_ID] = 0;
 
-    int level = 1;
+    int currentLevel = 0;
+    int nextLevel = 1;
     while (frontier->count != 0) {
         vertex_set_clear(new_frontier);
 
-        bottomUpParallel(graph, frontier, new_frontier, sol->distances, level);
+        bottomUpParallel(graph, frontier, new_frontier, sol->distances, currentLevel, nextLevel);
 
         vertex_set* temp = frontier;
         frontier = new_frontier;
         new_frontier = temp;
+        currentLevel++;
+        nextLevel++;
     }
 
     vertex_set_free(&list1);

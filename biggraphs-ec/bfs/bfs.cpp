@@ -213,6 +213,10 @@ void top_down_step3(Graph g, vertex_set* frontier, vertex_set* new_frontier, int
             if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, level)) {
                 buffer[buffer_size++] = *x;
             }
+            // if (distances[*x] == NOT_VISITED_MARKER) { // This has comparable speed as the compare_and_swap above
+            //     distances[*x] = level;
+            //     buffer[buffer_size++] = *x;
+            // }
         }
     }
     int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
@@ -280,14 +284,28 @@ void bfs_top_down(Graph graph, solution* sol) {
 void bottomUpParallel(Graph g, vertex_set* frontier, vertex_set* new_frontier, int* distances, int nextLevel)  
 {
 #pragma omp parallel
-{
+{   
+    // printf("Enter bottomUp");
     Vertex* buffer = new Vertex[g->num_nodes];
     int buffer_size = 0;
     
-    // #pragma omp for schedule(dynamic, 512)
-    // for (int v = 0; v < g->num_nodes, v++) {
-    //     if (distances[v] == NOT_VISITED_MARKER) {}
-    // }
+    #pragma omp for schedule(dynamic, 512)
+    for (int v = 0; v < g->num_nodes; v++) { // loop through 所有node，对于任意node，如果这个node
+        if (distances[v] != NOT_VISITED_MARKER) {continue;}
+
+        for (const Vertex* u = incoming_begin(g, v), *end = incoming_end(g, v); u < end; ++u) {
+            if (__sync_bool_compare_and_swap(distances + *u, NOT_VISITED_MARKER, nextLevel)) {
+                buffer[buffer_size++] = v;
+                // break;
+            }
+        }
+    }
+
+    int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
+    // printf("Reach memcpy");
+    memcpy(new_frontier->vertices + index, buffer, buffer_size * sizeof(Vertex));
+    // printf("after memcpy");
+    delete[] buffer;
 }
 
 }
@@ -310,13 +328,13 @@ void bfs_bottom_up(Graph graph, solution* sol)
     vertex_set list2;
     
     vertex_set_init(&list1, graph->num_nodes);
-    vertex_set_init(&list1, graph->num_nodes);
+    vertex_set_init(&list2, graph->num_nodes); //Here i did &list1, graph->num_nodes, which means I set init list1 twice and did not initialize list2, causing seg fault
 
     vertex_set* frontier = &list1;
     vertex_set* new_frontier = &list2;
 
     #pragma omp parallel for
-    for (int i=0; i<graph->num_nodes; i++)
+    for (int i=0; i < graph->num_nodes; i++)
         sol->distances[i] = NOT_VISITED_MARKER;
 
     frontier->vertices[frontier->count++] = ROOT_NODE_ID;

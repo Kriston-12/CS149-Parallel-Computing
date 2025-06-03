@@ -135,6 +135,7 @@ int main(int argc, char** argv) {
                     break;
                 }
             }
+            // printf("Code enteres here finishing top down comparision");
 
             //Run implementations
             start = CycleTimer::currentSeconds();

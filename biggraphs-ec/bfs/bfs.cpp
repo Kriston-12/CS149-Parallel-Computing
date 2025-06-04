@@ -181,7 +181,7 @@ void top_down_step2(Graph g, vertex_set* frontier, vertex_set* new_frontier,
     std::unique_ptr<Vertex[]> buffer(new Vertex[g->num_nodes]);
     int buffer_size = 0;
 
-    #pragma omp for schedule(guided)
+    #pragma omp for schedule(dynamic, 512)
     for (int i = 0; i < frontier->count; i++) {
       const int node = frontier->vertices[i];
 
@@ -206,18 +206,18 @@ void top_down_step3(Graph g, vertex_set* frontier, vertex_set* new_frontier, int
     std::unique_ptr<Vertex[]> buffer(new Vertex[g->num_nodes]);
     int buffer_size = 0;
 
-    #pragma omp for schedule(guided)
+    #pragma omp for schedule(dynamic, 512)
     for (int i = 0; i < frontier->count; i++) {
         
         const int node = frontier->vertices[i];
         for (const Vertex* x = outgoing_begin(g, node), *limit = outgoing_end(g, node); x < limit; x++) {
-            if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, level)) {
-                buffer[buffer_size++] = *x;
-            }
-            // if (distances[*x] == NOT_VISITED_MARKER) { // This has comparable speed as the compare_and_swap above
-            //     distances[*x] = level;
+            // if (__sync_bool_compare_and_swap(distances + *x, NOT_VISITED_MARKER, level)) {
             //     buffer[buffer_size++] = *x;
             // }
+            if (distances[*x] == NOT_VISITED_MARKER) { // This has comparable speed as the compare_and_swap above
+                distances[*x] = level;
+                buffer[buffer_size++] = *x;
+            }
         }
     }
     int index = __sync_fetch_and_add(&new_frontier->count, buffer_size);
@@ -369,4 +369,44 @@ void bfs_hybrid(Graph graph, solution* sol)
     //
     // You will need to implement the "hybrid" BFS here as
     // described in the handout.
+
+    vertex_set list1;
+    vertex_set list2;
+    
+    vertex_set_init(&list1, graph->num_nodes);
+    vertex_set_init(&list2, graph->num_nodes);
+
+    vertex_set* frontier = &list1;
+    vertex_set* new_frontier = &list2;
+    
+    int totalNodes = graph->num_nodes;
+
+    #pragma omp parallel for
+    for (int i=0; i < totalNodes; i++)
+        sol->distances[i] = NOT_VISITED_MARKER;
+
+    frontier->vertices[frontier->count++] = ROOT_NODE_ID;
+    sol->distances[ROOT_NODE_ID] = 0;
+
+    int currentLevel = 0;
+    int nextLevel = 1;
+    while (frontier->count != 0) {
+        vertex_set_clear(new_frontier);
+
+        if (frontier->count < 0.05 * totalNodes) {
+            top_down_step3(graph, frontier, new_frontier, sol->distances, nextLevel);
+        }
+        else {
+            bottomUpParallel(graph, frontier, new_frontier, sol->distances, currentLevel, nextLevel);
+        }
+        
+        vertex_set* temp = frontier;
+        frontier = new_frontier;
+        new_frontier = temp;
+        currentLevel++;
+        nextLevel++;
+    }
+
+    vertex_set_free(&list1);
+    vertex_set_free(&list2);
 }
